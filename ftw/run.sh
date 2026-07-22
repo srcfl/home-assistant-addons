@@ -90,9 +90,12 @@ monitor_optimizer() (
 # shellcheck disable=SC2329 # Called by the signal trap.
 request_stop() {
   stop_requested=1
-  [[ -n "${core_pid}" ]] && kill -TERM "${core_pid}" 2>/dev/null || true
-  [[ -n "${optimizer_monitor_pid}" ]] \
-    && kill -TERM "${optimizer_monitor_pid}" 2>/dev/null || true
+  if [[ -n "${core_pid}" ]]; then
+    kill -TERM "${core_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${optimizer_monitor_pid}" ]]; then
+    kill -TERM "${optimizer_monitor_pid}" 2>/dev/null || true
+  fi
 }
 
 wait_for_exit() {

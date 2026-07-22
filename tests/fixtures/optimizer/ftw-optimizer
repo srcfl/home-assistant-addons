@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import signal
+import socket
+import threading
+
+
+socket_path = pathlib.Path(os.environ["FTW_OPTIMIZER_SOCKET"])
+stop = False
+
+
+def request_stop(*_: object) -> None:
+    global stop
+    stop = True
+
+
+def serve_client(connection: socket.socket) -> None:
+    with connection:
+        reader = connection.makefile("r", encoding="utf-8")
+        writer = connection.makefile("w", encoding="utf-8")
+        for line in reader:
+            request = json.loads(line)
+            if request.get("type") == "handshake":
+                response = {
+                    "name": "ftw-optimizer",
+                    "version": "fixture",
+                    "protocol_version": 1,
+                    "features": ["champion", "recourse", "multistage"],
+                }
+            else:
+                response = {"request_id": request.get("request_id", "fixture"), "error": "fixture"}
+            writer.write(json.dumps(response) + "\n")
+            writer.flush()
+
+
+signal.signal(signal.SIGTERM, request_stop)
+signal.signal(signal.SIGINT, request_stop)
+socket_path.parent.mkdir(parents=True, exist_ok=True)
+socket_path.unlink(missing_ok=True)
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(str(socket_path))
+os.chmod(socket_path, 0o660)
+server.listen(8)
+server.settimeout(0.2)
+while not stop:
+    try:
+        connection, _ = server.accept()
+    except TimeoutError:
+        continue
+    threading.Thread(target=serve_client, args=(connection,), daemon=True).start()
+server.close()
+socket_path.unlink(missing_ok=True)

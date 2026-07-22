@@ -1,0 +1,50 @@
+schema_version: 1
+add_on:
+  version: 0.0.0-dev
+  channel: bootstrap
+  image: ghcr.io/srcfl/home-assistant-addons/ftw
+  manifest_digest: __ADD_ON_MANIFEST_DIGEST__
+  architectures:
+    - amd64
+    - aarch64
+update_owner: home_assistant_supervisor
+core:
+  version: __CORE_VERSION__
+  image: ghcr.io/srcfl/ftw
+  digest: __CORE_IMAGE_DIGEST__
+  commit: __CORE_COMMIT__
+  mode: home_assistant_add_on
+  self_update: false
+optimizer:
+  version: __OPTIMIZER_VERSION__
+  image: ghcr.io/srcfl/ftw-optimizer
+  digest: __OPTIMIZER_IMAGE_DIGEST__
+  commit: __OPTIMIZER_COMMIT__
+  name: ftw-optimizer
+  protocol_version: 1
+  plan_schema_version: 1
+  socket: /run/ftw-optimizer/optimizer.sock
+  transport: unix
+  required_features:
+    - champion
+  conditional_features:
+    - recourse
+    - multistage
+drivers:
+  source: https://github.com/srcfl/device-drivers
+  channel: stable
+  manifest: https://github.com/srcfl/device-drivers/releases/download/drivers-stable/manifest.json
+  bundled_role: offline_recovery
+  user_directory: /data/drivers
+qualification:
+  upstream_gate:
+    status: blocked
+    evidence: null
+  home_assistant_os_supervisor:
+    status: blocked
+    evidence: null
+  promoted_from_beta:
+    channel: null
+    version: null
+    manifest_digest: null
+    source_commit: null

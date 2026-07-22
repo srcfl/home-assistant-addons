@@ -1,0 +1,283 @@
+name: Publish beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Add-on SemVer, for example 0.1.0-beta.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftw-beta-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: ftw
+  REGISTRY_PREFIX: ghcr.io/srcfl/home-assistant-addons
+
+jobs:
+  prepare:
+    name: Validate release inputs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.info.outputs.version }}
+      core_ref: ${{ steps.info.outputs.core_ref }}
+      core_version: ${{ steps.info.outputs.core_version }}
+      core_digest: ${{ steps.info.outputs.core_digest }}
+      core_commit: ${{ steps.info.outputs.core_commit }}
+      optimizer_ref: ${{ steps.info.outputs.optimizer_ref }}
+      optimizer_version: ${{ steps.info.outputs.optimizer_version }}
+      optimizer_digest: ${{ steps.info.outputs.optimizer_digest }}
+      optimizer_commit: ${{ steps.info.outputs.optimizer_commit }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: python -m pip install -r scripts/requirements.txt
+      - name: Require the reviewed main commit
+        run: >-
+          python scripts/release_gate.py source-prepare
+          --ref "${GITHUB_REF}"
+          --sha "${GITHUB_SHA}"
+      - run: python scripts/validate.py --channel beta
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - id: info
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import yaml
+
+          root = pathlib.Path.cwd()
+          config = yaml.safe_load((root / "ftw/config.yaml").read_text())
+          compat = yaml.safe_load((root / "compatibility.yaml").read_text())
+          version = config["version"]
+          if version != os.environ["REQUESTED_VERSION"]:
+              raise SystemExit("workflow version does not match ftw/config.yaml")
+          core = compat["core"]
+          optimizer = compat["optimizer"]
+          if compat["add_on"]["manifest_digest"] != "__PUBLISHED_BY_BETA_WORKFLOW__":
+              raise SystemExit("beta publisher marker is missing from compatibility.yaml")
+          output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          values = {
+              "version": version,
+              "core_ref": f'{core["image"]}@{core["digest"]}',
+              "core_version": core["version"],
+              "core_digest": core["digest"],
+              "core_commit": core["commit"],
+              "optimizer_ref": f'{optimizer["image"]}@{optimizer["digest"]}',
+              "optimizer_version": optimizer["version"],
+              "optimizer_digest": optimizer["digest"],
+              "optimizer_commit": optimizer["commit"],
+          }
+          with output.open("a", encoding="utf-8") as target:
+              for key, value in values.items():
+                  target.write(f"{key}={value}\n")
+          PY
+      - name: Check immutable targets and upstream images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.info.outputs.version }}
+        run: >-
+          python scripts/release_gate.py beta-prepare
+          --version "${VERSION}"
+          --repository "${GITHUB_REPOSITORY}"
+      - id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  build:
+    name: Build and sign ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - id: image
+        uses: home-assistant/builder/actions/build-image@2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          build-args: |
+            FTW_CORE_FROM=${{ needs.prepare.outputs.core_ref }}
+            FTW_OPTIMIZER_FROM=${{ needs.prepare.outputs.optimizer_ref }}
+            BUILD_SHA=${{ github.sha }}
+            CORE_VERSION=${{ needs.prepare.outputs.core_version }}
+            CORE_DIGEST=${{ needs.prepare.outputs.core_digest }}
+            OPTIMIZER_VERSION=${{ needs.prepare.outputs.optimizer_version }}
+            OPTIMIZER_DIGEST=${{ needs.prepare.outputs.optimizer_digest }}
+          cache-gha-scope: ftw
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./ftw
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.prepare.outputs.version }}
+            beta
+          labels: |
+            io.hass.type=app
+            io.hass.name=FTW
+            io.hass.description=Local-first home energy control from Sourceful
+            io.hass.url=https://github.com/srcfl/home-assistant-addons/tree/main/ftw
+          push: "true"
+          version: ${{ needs.prepare.outputs.version }}
+      - uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ matrix.image }}@${{ steps.image.outputs.digest }}
+          format: spdx-json
+          output-file: ftw-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+      - uses: actions/attest@v4
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: ftw-${{ matrix.arch }}.spdx.json
+          push-to-registry: true
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ftw-${{ matrix.arch }}-sbom
+          path: ftw-${{ matrix.arch }}.spdx.json
+          if-no-files-found: error
+
+  manifest:
+    name: Publish and sign multi-arch beta
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      packages: write
+    steps:
+      - uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.prepare.outputs.version }}
+            beta
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  evidence:
+    name: Record digest, SBOM, and attestation
+    needs: [prepare, manifest]
+    runs-on: ubuntu-24.04
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: actions/download-artifact@v7.0.0
+        with:
+          pattern: ftw-*-sbom
+          merge-multiple: true
+      - id: digest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          image="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}"
+          digest="$(docker buildx imagetools inspect "${image}" --format '{{.Manifest.Digest}}')"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+          echo "image_ref=${REGISTRY_PREFIX}/${IMAGE_NAME}@${digest}" >>"${GITHUB_OUTPUT}"
+      - name: Create release manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+          CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
+          CORE_DIGEST: ${{ needs.prepare.outputs.core_digest }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          OPTIMIZER_VERSION: ${{ needs.prepare.outputs.optimizer_version }}
+          OPTIMIZER_DIGEST: ${{ needs.prepare.outputs.optimizer_digest }}
+          OPTIMIZER_COMMIT: ${{ needs.prepare.outputs.optimizer_commit }}
+        run: |
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg image "${REGISTRY_PREFIX}/${IMAGE_NAME}" \
+            --arg digest "${DIGEST}" \
+            --arg source_commit "${GITHUB_SHA}" \
+            --arg core_version "${CORE_VERSION}" \
+            --arg core_digest "${CORE_DIGEST}" \
+            --arg core_commit "${CORE_COMMIT}" \
+            --arg optimizer_version "${OPTIMIZER_VERSION}" \
+            --arg optimizer_digest "${OPTIMIZER_DIGEST}" \
+            --arg optimizer_commit "${OPTIMIZER_COMMIT}" \
+            '{schema_version: 1, channel: "beta", version: $version,
+              image: $image, manifest_digest: $digest, source_commit: $source_commit,
+              update_owner: "home_assistant_supervisor",
+              core: {version: $core_version, digest: $core_digest, commit: $core_commit},
+              optimizer: {version: $optimizer_version, digest: $optimizer_digest, commit: $optimizer_commit,
+                name: "ftw-optimizer", protocol_version: 1, features: ["champion"]},
+              sboms: ["ftw-amd64.spdx.json", "ftw-aarch64.spdx.json", "ftw.spdx.json"]}' \
+            >release-manifest.json
+      - uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ steps.digest.outputs.image_ref }}
+          format: spdx-json
+          output-file: ftw.spdx.json
+          upload-artifact: false
+      - uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY_PREFIX }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: ftw.spdx.json
+          push-to-registry: true
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ftw-${{ needs.prepare.outputs.version }}-release-evidence
+          path: |
+            release-manifest.json
+            ftw*.spdx.json
+          if-no-files-found: error
+      - name: Create beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          tag="ftw-v${VERSION}"
+          gh release create "${tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "FTW add-on v${VERSION}" \
+            --notes "Beta. Home Assistant OS and Supervisor qualification is still required before stable promotion." \
+            --prerelease \
+            --latest=false \
+            release-manifest.json ftw*.spdx.json

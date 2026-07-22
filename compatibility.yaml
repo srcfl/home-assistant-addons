@@ -44,5 +44,7 @@ qualification:
     status: blocked
     evidence: null
   promoted_from_beta:
+    channel: null
     version: null
     manifest_digest: null
+    source_commit: null

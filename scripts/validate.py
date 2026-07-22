@@ -153,9 +153,11 @@ def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any
     require(ha_gate.get("status") == "passed", "Home Assistant OS and Supervisor pilot has not passed")
     require(ha_gate.get("evidence"), "Home Assistant pilot evidence is missing")
     promoted = qualification.get("promoted_from_beta", {})
+    require(promoted.get("channel") == "beta", "promoted release channel must be beta")
     require(BETA_SEMVER.fullmatch(str(promoted.get("version", ""))) is not None, "promoted beta version is missing")
     require(str(promoted["version"]).split("-beta.", 1)[0] == version, "stable and beta SemVer bases differ")
     require(promoted.get("manifest_digest") == compat["add_on"]["manifest_digest"], "stable digest differs from beta")
+    require(COMMIT.fullmatch(str(promoted.get("source_commit", ""))) is not None, "promoted beta commit is missing")
 
 
 def main() -> int:

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "channel": "beta",
+  "version": "0.1.0-beta.1",
+  "image": "ghcr.io/srcfl/home-assistant-addons/ftw",
+  "manifest_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "source_commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

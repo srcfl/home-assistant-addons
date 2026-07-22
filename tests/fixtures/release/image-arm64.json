@@ -1,0 +1,10 @@
+{
+  "architecture": "arm64",
+  "config": {
+    "Labels": {
+      "org.opencontainers.image.revision": "cccccccccccccccccccccccccccccccccccccccc",
+      "org.opencontainers.image.version": "v1.2.3-beta.1"
+    }
+  },
+  "os": "linux"
+}

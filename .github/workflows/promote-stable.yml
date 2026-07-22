@@ -51,32 +51,80 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v4
-      - name: Check stable inputs and beta record
+      - name: Download the immutable beta release record
+        env:
+          BETA_VERSION: ${{ inputs.beta_version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          install -d "${RUNNER_TEMP}/beta-release"
+          gh release download "ftw-v${BETA_VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern release-manifest.json \
+            --dir "${RUNNER_TEMP}/beta-release"
+      - id: gate
+        name: Check beta evidence and stable tag
         env:
           VERSION: ${{ inputs.version }}
           BETA_VERSION: ${{ inputs.beta_version }}
           BETA_DIGEST: ${{ inputs.beta_digest }}
+        run: >-
+          python scripts/release_gate.py stable-prepare
+          --version "${VERSION}"
+          --beta-version "${BETA_VERSION}"
+          --beta-digest "${BETA_DIGEST}"
+          --release-manifest "${RUNNER_TEMP}/beta-release/release-manifest.json"
+      - id: release_record
+        name: Prepare idempotent stable release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BETA_VERSION: ${{ inputs.beta_version }}
+          BETA_DIGEST: ${{ inputs.beta_digest }}
+          BETA_SOURCE_COMMIT: ${{ steps.gate.outputs.beta_source_commit }}
         run: |
-          python - <<'PY'
-          import os
-          import pathlib
-          import yaml
-
-          config = yaml.safe_load(pathlib.Path("ftw/config.yaml").read_text())
-          compat = yaml.safe_load(pathlib.Path("compatibility.yaml").read_text())
-          promoted = compat["qualification"]["promoted_from_beta"]
-          checks = {
-              "stable version": (config["version"], os.environ["VERSION"]),
-              "beta version": (promoted["version"], os.environ["BETA_VERSION"]),
-              "beta digest input": (promoted["manifest_digest"], os.environ["BETA_DIGEST"]),
-              "stable digest": (compat["add_on"]["manifest_digest"], os.environ["BETA_DIGEST"]),
-          }
-          for name, (actual, expected) in checks.items():
-              if actual != expected:
-                  raise SystemExit(f"{name} mismatch: {actual!r} != {expected!r}")
-          PY
-          actual="$(docker buildx imagetools inspect "${IMAGE}:${BETA_VERSION}" --format '{{.Manifest.Digest}}')"
-          test "${actual}" = "${BETA_DIGEST}"
+          install -d "${RUNNER_TEMP}/stable-record"
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg beta_version "${BETA_VERSION}" \
+            --arg digest "${BETA_DIGEST}" \
+            --arg source_commit "${BETA_SOURCE_COMMIT}" \
+            '{schema_version: 1, channel: "stable", version: $version,
+              image: "ghcr.io/srcfl/home-assistant-addons/ftw", manifest_digest: $digest,
+              promoted_from_beta: $beta_version, source_commit: $source_commit,
+              update_owner: "home_assistant_supervisor", rebuilt: false}' \
+            >"${RUNNER_TEMP}/stable-record/release-manifest.json"
+          tag="ftw-v${VERSION}"
+          set +e
+          lookup="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json tagName 2>&1)"
+          status=$?
+          set -e
+          if [[ ${status} -eq 0 ]]; then
+            install -d "${RUNNER_TEMP}/stable-release"
+            gh release download "${tag}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern release-manifest.json \
+              --dir "${RUNNER_TEMP}/stable-release"
+            python scripts/release_gate.py compare-json \
+              --expected "${RUNNER_TEMP}/stable-record/release-manifest.json" \
+              --actual "${RUNNER_TEMP}/stable-release/release-manifest.json"
+            echo "exists=true" >>"${GITHUB_OUTPUT}"
+          elif grep -qi 'release not found' <<<"${lookup}"; then
+            set +e
+            git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1
+            tag_status=$?
+            set -e
+            if [[ ${tag_status} -eq 0 ]]; then
+              echo "${tag} exists without a release record" >&2
+              exit 1
+            elif [[ ${tag_status} -ne 2 ]]; then
+              echo "could not check Git tag ${tag}" >&2
+              exit 1
+            fi
+            echo "exists=false" >>"${GITHUB_OUTPUT}"
+          else
+            echo "could not check ${tag}: ${lookup}" >&2
+            exit 1
+          fi
       - name: Verify the beta manifest signature
         uses: home-assistant/builder/actions/cosign-verify@2026.06.0
         with:
@@ -90,8 +138,12 @@ jobs:
           VERSION: ${{ inputs.version }}
           BETA_DIGEST: ${{ inputs.beta_digest }}
         run: |
+          if [[ "${{ steps.gate.outputs.stable_tag_exists }}" != true ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:${VERSION}" \
+              "${IMAGE}@${BETA_DIGEST}"
+          fi
           docker buildx imagetools create \
-            --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:stable" \
             "${IMAGE}@${BETA_DIGEST}"
           stable_digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
@@ -99,26 +151,18 @@ jobs:
           test "${stable_digest}" = "${BETA_DIGEST}"
           test "${alias_digest}" = "${BETA_DIGEST}"
       - name: Create stable release record
+        if: steps.release_record.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           BETA_VERSION: ${{ inputs.beta_version }}
           BETA_DIGEST: ${{ inputs.beta_digest }}
         run: |
-          jq -n \
-            --arg version "${VERSION}" \
-            --arg beta_version "${BETA_VERSION}" \
-            --arg digest "${BETA_DIGEST}" \
-            --arg source_commit "${GITHUB_SHA}" \
-            '{schema_version: 1, channel: "stable", version: $version,
-              image: "ghcr.io/srcfl/home-assistant-addons/ftw", manifest_digest: $digest,
-              promoted_from_beta: $beta_version, source_commit: $source_commit,
-              update_owner: "home_assistant_supervisor", rebuilt: false}' \
-            >release-manifest.json
-          gh release create "ftw-v${VERSION}" \
+          tag="ftw-v${VERSION}"
+          gh release create "${tag}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "FTW add-on v${VERSION}" \
             --notes "Stable promotion of ${BETA_VERSION}. The manifest digest is unchanged: ${BETA_DIGEST}." \
             --latest=true \
-            release-manifest.json
+            "${RUNNER_TEMP}/stable-record/release-manifest.json"

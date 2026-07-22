@@ -31,8 +31,8 @@ and Supervisor hardware. Stable stays blocked until all steps pass.
 1. Change only store and release metadata for the stable add-on version. Remove
    `stage: experimental` so Home Assistant applies its stable default.
 2. Record the passed pilot and its evidence in `compatibility.yaml`.
-3. Set `promoted_from_beta` to the tested beta version and digest. Set the
-   stable add-on manifest digest to that same digest.
+3. Set `promoted_from_beta` to the tested beta channel, version, digest, and
+   source commit. Set the stable add-on manifest digest to that same digest.
 4. Merge the reviewed metadata change.
 5. Run **Promote stable** with the stable version, beta version, and beta
    digest.

@@ -60,6 +60,12 @@ def validate_beta_target_state(*, git_tag_exists: bool, release_exists: bool, im
     require(image_digest is None, "immutable beta image version tag already exists")
 
 
+def validate_workflow_source(*, ref: str, expected_sha: str, actual_sha: str) -> None:
+    require(ref == "refs/heads/main", "release workflows must run from refs/heads/main")
+    require(COMMIT.fullmatch(expected_sha) is not None, "github.sha is invalid")
+    require(actual_sha == expected_sha, "checked-out HEAD differs from github.sha")
+
+
 def optional_image_digest(reference: str) -> str | None:
     result = run(["docker", "buildx", "imagetools", "inspect", reference, "--format", "{{.Manifest.Digest}}"])
     if result.returncode == 0:
@@ -251,6 +257,11 @@ def beta_prepare(args: argparse.Namespace) -> None:
         inspect_pinned_image(name, item["image"], item["digest"], item["version"], item["commit"])
 
 
+def source_prepare(args: argparse.Namespace) -> None:
+    actual_sha = command_output(["git", "rev-parse", "HEAD"])
+    validate_workflow_source(ref=args.ref, expected_sha=args.sha, actual_sha=actual_sha)
+
+
 def stable_prepare(args: argparse.Namespace) -> None:
     config = load_yaml(ROOT / "ftw/config.yaml")
     compat = load_yaml(ROOT / "compatibility.yaml")
@@ -279,6 +290,11 @@ def validate_same_json(expected: dict[str, Any], actual: dict[str, Any]) -> None
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
+
+    source = commands.add_parser("source-prepare")
+    source.add_argument("--ref", required=True)
+    source.add_argument("--sha", required=True)
+    source.set_defaults(handler=source_prepare)
 
     beta = commands.add_parser("beta-prepare")
     beta.add_argument("--version", required=True)

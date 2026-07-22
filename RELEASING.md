@@ -3,6 +3,10 @@
 The add-on has its own SemVer. Core, Optimizer, and drivers keep their own
 release lines. Do not infer one version from another.
 
+Run both release workflows only from `main`. Each workflow stops before registry
+login unless `github.ref` is `refs/heads/main` and the checked-out commit equals
+`github.sha`.
+
 ## First beta
 
 1. Wait for the Core and Optimizer owners to send exact versions, commits, and

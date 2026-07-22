@@ -59,6 +59,25 @@ class BetaTargetTests(unittest.TestCase):
             )
 
 
+class WorkflowSourceTests(unittest.TestCase):
+    def test_main_at_expected_commit_passes(self) -> None:
+        release_gate.validate_workflow_source(
+            ref="refs/heads/main", expected_sha=COMMIT, actual_sha=COMMIT
+        )
+
+    def test_non_main_branch_fails(self) -> None:
+        with self.assertRaisesRegex(release_gate.GateError, "refs/heads/main"):
+            release_gate.validate_workflow_source(
+                ref="refs/heads/agent/release", expected_sha=COMMIT, actual_sha=COMMIT
+            )
+
+    def test_wrong_checkout_fails(self) -> None:
+        with self.assertRaisesRegex(release_gate.GateError, "checked-out HEAD"):
+            release_gate.validate_workflow_source(
+                ref="refs/heads/main", expected_sha=COMMIT, actual_sha="f" * 40
+            )
+
+
 class ImageEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.index = fixture("index.json")

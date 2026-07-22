@@ -4,13 +4,15 @@ This is the official Home Assistant app repository for
 [FTW](https://github.com/srcfl/ftw).
 
 The repository is public, but it is not ready for normal use. The first beta
-will appear only after its pinned Core and Optimizer images pass their release
-checks. Stable stays blocked until the same beta image passes a Home Assistant
-OS and Supervisor test for install, boot, data retention, update, and fallback.
+release inputs are pinned, but no add-on image has been published. Publication
+still needs a review of those inputs. Stable stays blocked until the same beta
+image passes a Home Assistant OS and Supervisor test for install, boot, data
+retention, update, rollback, and fallback.
 
 ## Install
 
-Do not install the bootstrap version. When the first beta is ready:
+Do not install a version that lacks a GitHub release and signed image. When the
+first beta is published:
 
 1. In Home Assistant, open **Settings → Apps → App store → Repositories**.
 2. Add `https://github.com/srcfl/home-assistant-addons`.

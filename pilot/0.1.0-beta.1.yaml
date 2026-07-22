@@ -1,0 +1,74 @@
+schema_version: 1
+add_on_version: 0.1.0-beta.1
+status: blocked
+candidate:
+  source_commit: null
+  manifest_digest: null
+  core:
+    version: v1.10.0-beta.1
+    commit: e9adb3113513dcd449268096b0dd637f4753ed24
+    digest: sha256:03f98ad123b9d2924f1a037cca56f5eef2fdd19a0ead834e0d563d216a011dd5
+  optimizer:
+    version: v1.3.2-beta.1
+    commit: 2bea09edb9a69522c233159bc2f5962db08c084c
+    digest: sha256:3e595e1c8a4d44ea065749a7533e271f26233702141c3615302919b4019e79dc
+  drivers:
+    channel: stable
+    tested_commit: 2939543a2041a29566e6cf27a4eb5e4c69924de8
+    manifest_sha256: a1a4b029398325c5f0c9f79260a42cb1de28df8929426636160dd1a9f345fa19
+    key_id: ftw-drivers-2026-01
+environment:
+  host_architecture: null
+  hardware: null
+  home_assistant_os_version: null
+  supervisor_version: null
+  operator: null
+  started_at: null
+  completed_at: null
+checks:
+  install:
+    status: blocked
+    expected: Supervisor pulls the signed pre-built image for the host architecture.
+    evidence: null
+  boot_readiness:
+    status: blocked
+    expected: Setup opens, then health reports valid Core status after state migration.
+    evidence: null
+  persistence:
+    status: blocked
+    expected: Config, state, history, user drivers, and managed drivers survive app and host restarts.
+    evidence: null
+  optimizer_fallback:
+    status: blocked
+    expected: Socket, handshake, and solve failures keep Core ready on the Go planner.
+    evidence: null
+  optimizer_recovery:
+    status: blocked
+    expected: The Unix worker reconnects after capped retry without a container restart or hidden Python worker.
+    evidence: null
+  update:
+    status: blocked
+    from_version: null
+    from_manifest_digest: null
+    to_version: 0.1.0-beta.1
+    to_manifest_digest: null
+    expected: Supervisor updates from the exact prior signed beta with no FTW updater or Docker socket.
+    evidence: null
+  rollback:
+    status: blocked
+    from_version: 0.1.0-beta.1
+    from_manifest_digest: null
+    to_version: null
+    to_manifest_digest: null
+    backup_reference: null
+    expected: Supervisor rolls back the image, then the operator restores the matching HA backup and data state.
+    evidence: null
+  artifact_match:
+    status: blocked
+    expected: The pulled multi-architecture digest matches the signed beta release record.
+    evidence: null
+  active_solver:
+    status: blocked
+    expected: Unix handshake and solve use protocol 1, plan schema 1, and all requested features.
+    evidence: null
+notes: Beta publication and all Home Assistant OS and Supervisor checks remain blocked.

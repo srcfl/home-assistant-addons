@@ -1,5 +1,5 @@
 name: FTW
-version: "0.0.0-dev"
+version: "0.1.0-beta.1"
 slug: ftw
 description: Local-first home energy control from Sourceful
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw

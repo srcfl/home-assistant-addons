@@ -38,6 +38,11 @@ jobs:
       optimizer_version: ${{ steps.info.outputs.optimizer_version }}
       optimizer_digest: ${{ steps.info.outputs.optimizer_digest }}
       optimizer_commit: ${{ steps.info.outputs.optimizer_commit }}
+      driver_source: ${{ steps.info.outputs.driver_source }}
+      driver_channel: ${{ steps.info.outputs.driver_channel }}
+      driver_manifest: ${{ steps.info.outputs.driver_manifest }}
+      driver_commit: ${{ steps.info.outputs.driver_commit }}
+      driver_manifest_sha256: ${{ steps.info.outputs.driver_manifest_sha256 }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -77,6 +82,8 @@ jobs:
               raise SystemExit("workflow version does not match ftw/config.yaml")
           core = compat["core"]
           optimizer = compat["optimizer"]
+          drivers = compat["drivers"]
+          driver_baseline = drivers["tested_baseline"]
           if compat["add_on"]["manifest_digest"] != "__PUBLISHED_BY_BETA_WORKFLOW__":
               raise SystemExit("beta publisher marker is missing from compatibility.yaml")
           output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
@@ -90,6 +97,11 @@ jobs:
               "optimizer_version": optimizer["version"],
               "optimizer_digest": optimizer["digest"],
               "optimizer_commit": optimizer["commit"],
+              "driver_source": drivers["source"],
+              "driver_channel": drivers["channel"],
+              "driver_manifest": drivers["manifest"],
+              "driver_commit": driver_baseline["commit"],
+              "driver_manifest_sha256": driver_baseline["manifest_sha256"],
           }
           with output.open("a", encoding="utf-8") as target:
               for key, value in values.items():
@@ -228,6 +240,11 @@ jobs:
           OPTIMIZER_VERSION: ${{ needs.prepare.outputs.optimizer_version }}
           OPTIMIZER_DIGEST: ${{ needs.prepare.outputs.optimizer_digest }}
           OPTIMIZER_COMMIT: ${{ needs.prepare.outputs.optimizer_commit }}
+          DRIVER_SOURCE: ${{ needs.prepare.outputs.driver_source }}
+          DRIVER_CHANNEL: ${{ needs.prepare.outputs.driver_channel }}
+          DRIVER_MANIFEST: ${{ needs.prepare.outputs.driver_manifest }}
+          DRIVER_COMMIT: ${{ needs.prepare.outputs.driver_commit }}
+          DRIVER_MANIFEST_SHA256: ${{ needs.prepare.outputs.driver_manifest_sha256 }}
         run: |
           jq -n \
             --arg version "${VERSION}" \
@@ -240,12 +257,21 @@ jobs:
             --arg optimizer_version "${OPTIMIZER_VERSION}" \
             --arg optimizer_digest "${OPTIMIZER_DIGEST}" \
             --arg optimizer_commit "${OPTIMIZER_COMMIT}" \
+            --arg driver_source "${DRIVER_SOURCE}" \
+            --arg driver_channel "${DRIVER_CHANNEL}" \
+            --arg driver_manifest "${DRIVER_MANIFEST}" \
+            --arg driver_commit "${DRIVER_COMMIT}" \
+            --arg driver_manifest_sha256 "${DRIVER_MANIFEST_SHA256}" \
             '{schema_version: 1, channel: "beta", version: $version,
               image: $image, manifest_digest: $digest, source_commit: $source_commit,
               update_owner: "home_assistant_supervisor",
               core: {version: $core_version, digest: $core_digest, commit: $core_commit},
               optimizer: {version: $optimizer_version, digest: $optimizer_digest, commit: $optimizer_commit,
-                name: "ftw-optimizer", protocol_version: 1, features: ["champion"]},
+                name: "ftw-optimizer", protocol_version: 1, plan_schema_version: 1,
+                required_features: ["champion"], conditional_features: ["recourse", "multistage"]},
+              drivers: {source: $driver_source, channel: $driver_channel, manifest: $driver_manifest,
+                tested_commit: $driver_commit, manifest_sha256: $driver_manifest_sha256,
+                update_policy: "independent"},
               sboms: ["ftw-amd64.spdx.json", "ftw-aarch64.spdx.json", "ftw.spdx.json"]}' \
             >release-manifest.json
       - uses: anchore/sbom-action@v0.24.0

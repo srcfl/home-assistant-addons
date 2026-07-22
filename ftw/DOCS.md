@@ -2,8 +2,8 @@
 
 ## Before you install
 
-Install only a published beta or stable version. `0.0.0-dev` is a repository
-bootstrap and has no image.
+Install only a beta or stable version that has a GitHub release and signed
+image. A version in the source tree alone is not installable.
 
 The app supports Home Assistant OS and Supervised installs on `amd64` and
 `aarch64`. It uses host networking so FTW can reach devices on the local

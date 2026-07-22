@@ -1,25 +1,25 @@
 schema_version: 1
 add_on:
-  version: 0.0.0-dev
-  channel: bootstrap
+  version: 0.1.0-beta.1
+  channel: beta
   image: ghcr.io/srcfl/home-assistant-addons/ftw
-  manifest_digest: __ADD_ON_MANIFEST_DIGEST__
+  manifest_digest: __PUBLISHED_BY_BETA_WORKFLOW__
   architectures:
     - amd64
     - aarch64
 update_owner: home_assistant_supervisor
 core:
-  version: __CORE_VERSION__
+  version: v1.10.0-beta.1
   image: ghcr.io/srcfl/ftw
-  digest: __CORE_IMAGE_DIGEST__
-  commit: __CORE_COMMIT__
+  digest: sha256:03f98ad123b9d2924f1a037cca56f5eef2fdd19a0ead834e0d563d216a011dd5
+  commit: e9adb3113513dcd449268096b0dd637f4753ed24
   mode: home_assistant_add_on
   self_update: false
 optimizer:
-  version: __OPTIMIZER_VERSION__
+  version: v1.3.2-beta.1
   image: ghcr.io/srcfl/ftw-optimizer
-  digest: __OPTIMIZER_IMAGE_DIGEST__
-  commit: __OPTIMIZER_COMMIT__
+  digest: sha256:3e595e1c8a4d44ea065749a7533e271f26233702141c3615302919b4019e79dc
+  commit: 2bea09edb9a69522c233159bc2f5962db08c084c
   name: ftw-optimizer
   protocol_version: 1
   plan_schema_version: 1
@@ -34,15 +34,29 @@ drivers:
   source: https://github.com/srcfl/device-drivers
   channel: stable
   manifest: https://github.com/srcfl/device-drivers/releases/download/drivers-stable/manifest.json
+  independently_updateable: true
+  tested_baseline:
+    commit: 2939543a2041a29566e6cf27a4eb5e4c69924de8
+    manifest_sha256: a1a4b029398325c5f0c9f79260a42cb1de28df8929426636160dd1a9f345fa19
+    evidence:
+      commit: https://github.com/srcfl/device-drivers/commit/2939543a2041a29566e6cf27a4eb5e4c69924de8
+      release: https://github.com/srcfl/device-drivers/releases/tag/drivers-stable
   bundled_role: offline_recovery
   user_directory: /data/drivers
 qualification:
   upstream_gate:
-    status: blocked
-    evidence: null
+    status: passed
+    evidence:
+      core_release: https://github.com/srcfl/ftw/releases/tag/v1.10.0-beta.1
+      core_build: https://github.com/srcfl/ftw/actions/runs/29895148800
+      optimizer_release: https://github.com/srcfl/ftw/releases/tag/optimizer-v1.3.2-beta.1
+      optimizer_build: https://github.com/srcfl/ftw/actions/runs/29893751793
+      drivers_commit: https://github.com/srcfl/device-drivers/commit/2939543a2041a29566e6cf27a4eb5e4c69924de8
+      drivers_release: https://github.com/srcfl/device-drivers/releases/tag/drivers-stable
   home_assistant_os_supervisor:
     status: blocked
     evidence: null
+    record: pilot/0.1.0-beta.1.yaml
   promoted_from_beta:
     channel: null
     version: null

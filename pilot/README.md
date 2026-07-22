@@ -2,7 +2,9 @@
 
 Use a test host that matches a supported architecture. Record the Home
 Assistant OS, Supervisor, and host versions, all image digests, timestamps, and
-logs in a public issue or test report.
+logs in a public issue or test report. Fill the candidate record in
+[`0.1.0-beta.1.yaml`](0.1.0-beta.1.yaml) and link each result to public
+evidence.
 
 ## Required checks
 

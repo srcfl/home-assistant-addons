@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317 # Signal trap callbacks are invoked indirectly.
 set -Eeuo pipefail
 
 readonly runtime_uid=100

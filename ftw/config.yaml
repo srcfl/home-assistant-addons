@@ -7,8 +7,6 @@ arch:
   - amd64
   - aarch64
 init: false
-startup: application
-boot: auto
 stage: experimental
 host_network: true
 ports:
@@ -22,6 +20,4 @@ environment:
   FTW_SELFUPDATE_ENABLED: "0"
   FTW_OPTIMIZER_TRANSPORT: unix
   FTW_OPTIMIZER_SOCKET: /run/ftw-optimizer/optimizer.sock
-options: {}
-schema: {}
 image: ghcr.io/srcfl/home-assistant-addons/ftw

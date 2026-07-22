@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import socket
+
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.settimeout(4)
+    client.connect(os.environ["FTW_OPTIMIZER_SOCKET"])
+    client.sendall(b'{"type":"handshake","protocol_version":1}\n')
+    response = json.loads(client.makefile("r", encoding="utf-8").readline())
+assert response["name"] == "ftw-optimizer"
+assert response["protocol_version"] == 1
+assert "champion" in response["features"]

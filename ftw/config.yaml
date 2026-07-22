@@ -1,0 +1,27 @@
+name: FTW
+version: "0.0.0-dev"
+slug: ftw
+description: Local-first home energy control from Sourceful
+url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+stage: experimental
+host_network: true
+ports:
+  8080/tcp: 8080
+ports_description:
+  8080/tcp: FTW web interface and API
+webui: http://[HOST]:[PORT:8080]/
+backup: cold
+timeout: 60
+environment:
+  FTW_SELFUPDATE_ENABLED: "0"
+  FTW_OPTIMIZER_TRANSPORT: unix
+  FTW_OPTIMIZER_SOCKET: /run/ftw-optimizer/optimizer.sock
+options: {}
+schema: {}
+image: ghcr.io/srcfl/home-assistant-addons/ftw

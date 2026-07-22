@@ -1,0 +1,116 @@
+name: Promote stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable add-on SemVer, for example 0.1.0
+        required: true
+        type: string
+      beta_version:
+        description: Qualified beta SemVer, for example 0.1.0-beta.1
+        required: true
+        type: string
+      beta_digest:
+        description: Qualified beta manifest digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftw-stable-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/srcfl/home-assistant-addons/ftw
+
+jobs:
+  promote:
+    name: Re-tag the qualified beta digest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: python -m pip install -r scripts/requirements.txt
+      - run: python scripts/validate.py --channel stable
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Check stable inputs and beta record
+        env:
+          VERSION: ${{ inputs.version }}
+          BETA_VERSION: ${{ inputs.beta_version }}
+          BETA_DIGEST: ${{ inputs.beta_digest }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import yaml
+
+          config = yaml.safe_load(pathlib.Path("ftw/config.yaml").read_text())
+          compat = yaml.safe_load(pathlib.Path("compatibility.yaml").read_text())
+          promoted = compat["qualification"]["promoted_from_beta"]
+          checks = {
+              "stable version": (config["version"], os.environ["VERSION"]),
+              "beta version": (promoted["version"], os.environ["BETA_VERSION"]),
+              "beta digest input": (promoted["manifest_digest"], os.environ["BETA_DIGEST"]),
+              "stable digest": (compat["add_on"]["manifest_digest"], os.environ["BETA_DIGEST"]),
+          }
+          for name, (actual, expected) in checks.items():
+              if actual != expected:
+                  raise SystemExit(f"{name} mismatch: {actual!r} != {expected!r}")
+          PY
+          actual="$(docker buildx imagetools inspect "${IMAGE}:${BETA_VERSION}" --format '{{.Manifest.Digest}}')"
+          test "${actual}" = "${BETA_DIGEST}"
+      - name: Promote without a build
+        env:
+          VERSION: ${{ inputs.version }}
+          BETA_DIGEST: ${{ inputs.beta_digest }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:stable" \
+            "${IMAGE}@${BETA_DIGEST}"
+          stable_digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          alias_digest="$(docker buildx imagetools inspect "${IMAGE}:stable" --format '{{.Manifest.Digest}}')"
+          test "${stable_digest}" = "${BETA_DIGEST}"
+          test "${alias_digest}" = "${BETA_DIGEST}"
+      - name: Create stable release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BETA_VERSION: ${{ inputs.beta_version }}
+          BETA_DIGEST: ${{ inputs.beta_digest }}
+        run: |
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg beta_version "${BETA_VERSION}" \
+            --arg digest "${BETA_DIGEST}" \
+            --arg source_commit "${GITHUB_SHA}" \
+            '{schema_version: 1, channel: "stable", version: $version,
+              image: "ghcr.io/srcfl/home-assistant-addons/ftw", manifest_digest: $digest,
+              promoted_from_beta: $beta_version, source_commit: $source_commit,
+              update_owner: "home_assistant_supervisor", rebuilt: false}' \
+            >release-manifest.json
+          gh release create "ftw-v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "FTW add-on v${VERSION}" \
+            --notes "Stable promotion of ${BETA_VERSION}. The manifest digest is unchanged: ${BETA_DIGEST}." \
+            --latest=true \
+            release-manifest.json

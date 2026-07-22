@@ -3,11 +3,11 @@
 This is the official Home Assistant app repository for
 [FTW](https://github.com/srcfl/ftw).
 
-The repository is public, but it is not ready for normal use. The first beta
-release inputs are pinned, but no add-on image has been published. Publication
-still needs a review of those inputs. Stable stays blocked until the same beta
-image passes a Home Assistant OS and Supervisor test for install, boot, data
-retention, update, rollback, and fallback.
+The repository is public, but it is not ready for normal use. A registry image
+from an incomplete workflow is not a release. Install only a version that has a
+matching GitHub release, signed image, SBOM, and attestation. Stable stays
+blocked until the same beta image passes a Home Assistant OS and Supervisor test
+for install, boot, data retention, update, rollback, and fallback.
 
 ## Install
 
@@ -34,6 +34,19 @@ Beta images use the `beta` channel tag. Stable promotion adds a `stable` tag to
 the exact tested beta manifest digest. Stable promotion never rebuilds the
 image. FTW's updater is not present; Home Assistant Supervisor owns update and
 rollback.
+
+If publication stops after it writes the immutable image, the normal beta
+workflow cannot run again for that version. The separate finalize workflow may
+complete it only when the failed run, source commit, image digests, signatures,
+SBOMs, upstream images, and driver baseline still match. It never builds or
+rewrites an image tag. A failed finalize publishes no supported release, but
+`gh release create` may leave a hidden draft if an asset upload or network step
+fails. The next target check stops when that draft exists. Finalize must not
+retry automatically, delete the draft or tag, overwrite assets, or reuse the
+candidate. Treat the candidate as an orphan until a separate review approves a
+recovery; otherwise use a new beta version. The release manifest keeps the
+original image source commit; the OCI attestation also records the reviewed
+finalize workflow commit.
 
 ## Credit
 

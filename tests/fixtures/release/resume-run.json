@@ -1,0 +1,17 @@
+{
+  "run": {
+    "status": "completed",
+    "conclusion": "failure",
+    "event": "workflow_dispatch",
+    "head_branch": "main",
+    "head_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "path": ".github/workflows/release-beta.yml"
+  },
+  "jobs": [
+    {"name": "Validate release inputs", "status": "completed", "conclusion": "success"},
+    {"name": "Build and sign amd64", "status": "completed", "conclusion": "success"},
+    {"name": "Build and sign aarch64", "status": "completed", "conclusion": "success"},
+    {"name": "Publish and sign multi-arch beta", "status": "completed", "conclusion": "success"},
+    {"name": "Record digest, SBOM, and attestation", "status": "completed", "conclusion": "failure"}
+  ]
+}

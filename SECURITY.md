@@ -19,6 +19,10 @@ versions, impact, steps to reproduce, and any safe fix you know.
 We support only versions listed in `compatibility.yaml`. Bootstrap entries and
 failed or pending pilots are not supported releases.
 
+An image left in the registry by a failed publication workflow is not a
+supported beta. A supported beta needs a matching GitHub prerelease, immutable
+digest, Cosign signature, SPDX SBOM, and verified GitHub and OCI attestations.
+
 The app grants no Supervisor API, Home Assistant API, Docker API, privileged,
 or full-host rights. Host networking is required for Modbus TCP, LAN MQTT, and
 device discovery. The image runs Core and Optimizer as an unprivileged user;

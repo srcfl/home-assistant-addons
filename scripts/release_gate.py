@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -11,14 +13,22 @@ import re
 import subprocess
 import sys
 from typing import Any, Iterable
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import yaml
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ABSENT_IMAGE_MARKERS = ("manifest unknown", "name unknown", "not found")
+DRIVER_KEY_ID = "ftw-drivers-2026-01"
+DRIVER_PUBLIC_KEY = "MX+j27UBkyM099hTyJlmMLK9qlTTDUJsaK/vH12fFKc="
+DRIVER_REPOSITORY = "https://github.com/srcfl/device-drivers"
+MAX_DRIVER_MANIFEST_BYTES = 2 << 20
 
 
 class GateError(Exception):
@@ -52,6 +62,97 @@ def command_output(command: list[str]) -> str:
         detail = (result.stderr or result.stdout).strip()
         raise GateError(f"command failed ({' '.join(command)}): {detail}")
     return result.stdout.strip()
+
+
+def canonical_json(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def download_driver_manifest(url: str) -> bytes:
+    require(url.startswith("https://"), "driver manifest URL must use HTTPS")
+    request = Request(url, headers={"User-Agent": "srcfl-home-assistant-addons-release-gate"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            raw = response.read(MAX_DRIVER_MANIFEST_BYTES + 1)
+    except (OSError, URLError) as exc:
+        raise GateError(f"could not download driver manifest: {exc}") from exc
+    require(raw, "downloaded driver manifest is empty")
+    require(len(raw) <= MAX_DRIVER_MANIFEST_BYTES, "driver manifest exceeds the size limit")
+    return raw
+
+
+def validate_signed_driver_manifest(
+    raw: bytes,
+    *,
+    expected_sha256: str,
+    expected_commit: str,
+    expected_key_id: str = DRIVER_KEY_ID,
+    public_key_base64: str = DRIVER_PUBLIC_KEY,
+) -> dict[str, Any]:
+    require(
+        re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is not None,
+        "driver manifest SHA-256 is invalid",
+    )
+    require(COMMIT.fullmatch(expected_commit) is not None, "driver baseline commit is invalid")
+    require(hashlib.sha256(raw).hexdigest() == expected_sha256, "driver manifest SHA-256 mismatch")
+    try:
+        envelope = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GateError(f"driver manifest is not valid JSON: {exc}") from exc
+    require(isinstance(envelope, dict), "driver manifest envelope must be an object")
+    require(raw == canonical_json(envelope) + b"\n", "driver manifest must use exact canonical JSON bytes")
+    require(envelope.get("schema_version") == 1, "driver manifest schema_version must be 1")
+    require(envelope.get("key_id") == expected_key_id, "driver manifest key id mismatch")
+    payload = envelope.get("payload")
+    signature_value = envelope.get("signature")
+    require(isinstance(payload, dict), "driver manifest payload must be an object")
+    require(isinstance(signature_value, str), "driver manifest signature is missing")
+    try:
+        signature = base64.b64decode(signature_value, validate=True)
+        public_key = base64.b64decode(public_key_base64, validate=True)
+    except ValueError as exc:
+        raise GateError("driver manifest signature or public key is not valid base64") from exc
+    require(len(public_key) == 32, "driver manifest public key must be 32 bytes")
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical_json(payload))
+    except InvalidSignature as exc:
+        raise GateError("driver manifest signature verification failed") from exc
+
+    require(payload.get("schema_version") == 1, "driver manifest payload schema_version must be 1")
+    require(payload.get("repository") == DRIVER_REPOSITORY, "driver manifest payload repository is wrong")
+    require(payload.get("commit") == expected_commit, "driver manifest payload commit mismatch")
+    drivers = payload.get("drivers")
+    require(isinstance(drivers, list) and drivers, "driver manifest payload lacks drivers")
+    for driver in drivers:
+        require(isinstance(driver, dict), "driver manifest entry must be an object")
+        require(
+            driver.get("channel") == "stable",
+            "driver manifest contains a non-stable current driver",
+        )
+        require(
+            driver.get("source_commit") == expected_commit,
+            "driver manifest driver source commit mismatch",
+        )
+    return payload
+
+
+def verify_current_driver_baseline(drivers: dict[str, Any]) -> None:
+    baseline = drivers.get("tested_baseline")
+    require(isinstance(baseline, dict), "tested driver baseline is missing")
+    require(baseline.get("key_id") == DRIVER_KEY_ID, "tested driver key id mismatch")
+    raw = download_driver_manifest(str(drivers.get("manifest", "")))
+    validate_signed_driver_manifest(
+        raw,
+        expected_sha256=str(baseline.get("manifest_sha256", "")),
+        expected_commit=str(baseline.get("commit", "")),
+        expected_key_id=str(baseline.get("key_id", "")),
+    )
 
 
 def validate_beta_target_state(*, git_tag_exists: bool, release_exists: bool, image_digest: str | None) -> None:
@@ -252,6 +353,7 @@ def write_output(name: str, value: str) -> None:
 def beta_prepare(args: argparse.Namespace) -> None:
     compat = load_yaml(ROOT / "compatibility.yaml")
     beta_target_state(args.repository, compat["add_on"]["image"], args.version)
+    verify_current_driver_baseline(compat["drivers"])
     for key, name in (("core", "Core"), ("optimizer", "Optimizer")):
         item = compat[key]
         inspect_pinned_image(name, item["image"], item["digest"], item["version"], item["commit"])

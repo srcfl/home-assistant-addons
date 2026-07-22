@@ -43,6 +43,7 @@ jobs:
       driver_manifest: ${{ steps.info.outputs.driver_manifest }}
       driver_commit: ${{ steps.info.outputs.driver_commit }}
       driver_manifest_sha256: ${{ steps.info.outputs.driver_manifest_sha256 }}
+      driver_key_id: ${{ steps.info.outputs.driver_key_id }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -102,12 +103,13 @@ jobs:
               "driver_manifest": drivers["manifest"],
               "driver_commit": driver_baseline["commit"],
               "driver_manifest_sha256": driver_baseline["manifest_sha256"],
+              "driver_key_id": driver_baseline["key_id"],
           }
           with output.open("a", encoding="utf-8") as target:
               for key, value in values.items():
                   target.write(f"{key}={value}\n")
           PY
-      - name: Check immutable targets and upstream images
+      - name: Check immutable targets, signed drivers, and upstream images
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.info.outputs.version }}
@@ -245,6 +247,7 @@ jobs:
           DRIVER_MANIFEST: ${{ needs.prepare.outputs.driver_manifest }}
           DRIVER_COMMIT: ${{ needs.prepare.outputs.driver_commit }}
           DRIVER_MANIFEST_SHA256: ${{ needs.prepare.outputs.driver_manifest_sha256 }}
+          DRIVER_KEY_ID: ${{ needs.prepare.outputs.driver_key_id }}
         run: |
           jq -n \
             --arg version "${VERSION}" \
@@ -262,6 +265,7 @@ jobs:
             --arg driver_manifest "${DRIVER_MANIFEST}" \
             --arg driver_commit "${DRIVER_COMMIT}" \
             --arg driver_manifest_sha256 "${DRIVER_MANIFEST_SHA256}" \
+            --arg driver_key_id "${DRIVER_KEY_ID}" \
             '{schema_version: 1, channel: "beta", version: $version,
               image: $image, manifest_digest: $digest, source_commit: $source_commit,
               update_owner: "home_assistant_supervisor",
@@ -271,7 +275,7 @@ jobs:
                 required_features: ["champion"], conditional_features: ["recourse", "multistage"]},
               drivers: {source: $driver_source, channel: $driver_channel, manifest: $driver_manifest,
                 tested_commit: $driver_commit, manifest_sha256: $driver_manifest_sha256,
-                update_policy: "independent"},
+                key_id: $driver_key_id, update_policy: "independent"},
               sboms: ["ftw-amd64.spdx.json", "ftw-aarch64.spdx.json", "ftw.spdx.json"]}' \
             >release-manifest.json
       - uses: anchore/sbom-action@v0.24.0

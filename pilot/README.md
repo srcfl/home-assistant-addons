@@ -20,10 +20,15 @@ evidence.
    planner, and reconnects after the worker restarts.
 6. Test a wrong socket, bad handshake, and solve error. Each must use the Go
    planner without a Core crash or a hidden local Python worker.
-7. Update from the last supported add-on beta. Confirm that Supervisor owns the
-   update and that no FTW updater process or Docker socket exists in the app.
-8. Roll back to the prior version and restore its cold backup. Confirm that FTW
-   starts with the prior state.
+7. Record the exact prior signed beta version and manifest digest. Update from
+   that beta and confirm that Supervisor owns the update and that no FTW updater
+   process or Docker socket exists in the app. The first beta cannot pass this
+   check because it has no prior signed add-on beta.
+8. Record the exact candidate and target versions and manifest digests. Confirm
+   that Supervisor rolls the image back to the target digest. Then have the
+   operator restore the matching Home Assistant cold backup and data state.
+   Confirm that FTW starts with that state; do not claim that Supervisor restores
+   the state itself.
 9. Update to the candidate beta again. Confirm that the pulled manifest digest
    matches the signed release record.
 10. Run an active solver request and confirm Optimizer protocol 1, plan schema

@@ -151,10 +151,18 @@ def require_release_values(compat: dict[str, Any], *, require_app_digest: bool) 
         SHA256.fullmatch(str(baseline.get("manifest_sha256", ""))) is not None,
         "tested driver manifest SHA-256 is invalid",
     )
+    require(baseline.get("key_id") == "ftw-drivers-2026-01", "tested driver key id is wrong")
     require(baseline.get("evidence"), "tested driver baseline evidence is missing")
 
 
-def validate_beta_pilot(version: str, compat: dict[str, Any]) -> None:
+def validate_pilot(
+    version: str,
+    compat: dict[str, Any],
+    *,
+    require_passed: bool = False,
+    expected_source_commit: str | None = None,
+    expected_manifest_digest: str | None = None,
+) -> None:
     qualification = compat["qualification"]
     ha_gate = qualification.get("home_assistant_os_supervisor", {})
     record_name = f"pilot/{version}.yaml"
@@ -181,6 +189,7 @@ def validate_beta_pilot(version: str, compat: dict[str, Any]) -> None:
         pilot_drivers.get("manifest_sha256") == baseline["manifest_sha256"],
         "pilot driver manifest SHA-256 differs",
     )
+    require(pilot_drivers.get("key_id") == baseline["key_id"], "pilot driver key id differs")
 
     checks = record.get("checks")
     require(isinstance(checks, dict), "pilot checks must be an object")
@@ -192,8 +201,55 @@ def validate_beta_pilot(version: str, compat: dict[str, Any]) -> None:
         require(check.get("status") in ("blocked", "passed"), f"pilot check {name} status is invalid")
         if check["status"] == "passed":
             require(check.get("evidence"), f"passed pilot check {name} lacks evidence")
+
+    update = checks["update"]
+    rollback = checks["rollback"]
+    for field in ("from_version", "from_manifest_digest", "to_version", "to_manifest_digest"):
+        require(field in update, f"pilot update lacks {field}")
+        require(field in rollback, f"pilot rollback lacks {field}")
+    require(update["to_version"] == version, "pilot update target version differs")
+    require(
+        update["to_manifest_digest"] == candidate.get("manifest_digest"),
+        "pilot update target digest differs",
+    )
+    require(rollback["from_version"] == version, "pilot rollback source version differs")
+    require(
+        rollback["from_manifest_digest"] == candidate.get("manifest_digest"),
+        "pilot rollback source digest differs",
+    )
+    require(rollback["to_version"] == update["from_version"], "pilot rollback target version differs")
+    require(
+        rollback["to_manifest_digest"] == update["from_manifest_digest"],
+        "pilot rollback target digest differs",
+    )
+    if update["status"] == "passed":
+        require(
+            BETA_SEMVER.fullmatch(str(update["from_version"])) is not None,
+            "passed pilot update lacks a prior beta version",
+        )
+        require(
+            DIGEST.fullmatch(str(update["from_manifest_digest"])) is not None,
+            "passed pilot update lacks a prior beta digest",
+        )
+        require(
+            DIGEST.fullmatch(str(update["to_manifest_digest"])) is not None,
+            "passed pilot update target is invalid",
+        )
+    if rollback["status"] == "passed":
+        require(rollback.get("backup_reference"), "passed pilot rollback lacks a matching backup reference")
+        require(
+            BETA_SEMVER.fullmatch(str(rollback["to_version"])) is not None,
+            "passed pilot rollback lacks a prior beta version",
+        )
+        require(
+            DIGEST.fullmatch(str(rollback["to_manifest_digest"])) is not None,
+            "passed pilot rollback lacks a prior beta digest",
+        )
+
     gate_status = ha_gate.get("status")
     require(gate_status in ("blocked", "passed"), "Home Assistant gate status is invalid")
+    if require_passed:
+        require(gate_status == "passed", "stable requires a passed Home Assistant gate")
     if gate_status == "blocked":
         require(record.get("status") == "blocked", "blocked Home Assistant gate needs a blocked pilot record")
     else:
@@ -202,6 +258,10 @@ def validate_beta_pilot(version: str, compat: dict[str, Any]) -> None:
         require(COMMIT.fullmatch(str(candidate.get("source_commit", ""))) is not None, "pilot source commit is invalid")
         require(DIGEST.fullmatch(str(candidate.get("manifest_digest", ""))) is not None, "pilot digest is invalid")
         require(all(checks[name]["status"] == "passed" for name in PILOT_CHECKS), "passed pilot has blocked checks")
+        if expected_source_commit is not None:
+            require(candidate["source_commit"] == expected_source_commit, "pilot source commit differs from beta")
+        if expected_manifest_digest is not None:
+            require(candidate["manifest_digest"] == expected_manifest_digest, "pilot digest differs from beta")
 
 
 def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any]) -> None:
@@ -215,14 +275,20 @@ def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any
     require_release_values(compat, require_app_digest=channel == "stable")
     qualification = compat.get("qualification")
     require(isinstance(qualification, dict), "qualification must be an object")
-    require(qualification.get("upstream_gate", {}).get("status") == "passed", "upstream gate has not passed")
-    require(qualification.get("upstream_gate", {}).get("evidence"), "upstream gate evidence is missing")
+    upstream_gate = qualification.get("upstream_gate", {})
+    require(upstream_gate.get("status") == "passed", "upstream gate has not passed")
+    upstream_evidence = upstream_gate.get("evidence")
+    require(isinstance(upstream_evidence, dict), "upstream gate evidence is missing")
+    require(
+        str(upstream_evidence.get("core_live_pilot", "")).startswith("https://github.com/srcfl/ftw/"),
+        "public Core live-pilot evidence is missing",
+    )
 
     if channel == "beta":
         require(BETA_SEMVER.fullmatch(version) is not None, "beta version must match X.Y.Z-beta.N")
         require(compat["add_on"].get("channel") == "beta", "compatibility channel must be beta")
         require(config.get("stage") == "experimental", "beta app stage must be experimental")
-        validate_beta_pilot(version, compat)
+        validate_pilot(version, compat)
         return
 
     require(SEMVER.fullmatch(version) is not None, "stable version must match X.Y.Z")
@@ -237,6 +303,13 @@ def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any
     require(str(promoted["version"]).split("-beta.", 1)[0] == version, "stable and beta SemVer bases differ")
     require(promoted.get("manifest_digest") == compat["add_on"]["manifest_digest"], "stable digest differs from beta")
     require(COMMIT.fullmatch(str(promoted.get("source_commit", ""))) is not None, "promoted beta commit is missing")
+    validate_pilot(
+        str(promoted["version"]),
+        compat,
+        require_passed=True,
+        expected_source_commit=str(promoted["source_commit"]),
+        expected_manifest_digest=str(promoted["manifest_digest"]),
+    )
 
 
 def main() -> int:

@@ -16,6 +16,7 @@ candidate:
     channel: stable
     tested_commit: 2939543a2041a29566e6cf27a4eb5e4c69924de8
     manifest_sha256: a1a4b029398325c5f0c9f79260a42cb1de28df8929426636160dd1a9f345fa19
+    key_id: ftw-drivers-2026-01
 environment:
   host_architecture: null
   hardware: null
@@ -47,11 +48,20 @@ checks:
     evidence: null
   update:
     status: blocked
-    expected: Supervisor updates from the prior beta with no FTW updater or Docker socket.
+    from_version: null
+    from_manifest_digest: null
+    to_version: 0.1.0-beta.1
+    to_manifest_digest: null
+    expected: Supervisor updates from the exact prior signed beta with no FTW updater or Docker socket.
     evidence: null
   rollback:
     status: blocked
-    expected: Supervisor rolls back and restores the matching cold backup and prior state.
+    from_version: 0.1.0-beta.1
+    from_manifest_digest: null
+    to_version: null
+    to_manifest_digest: null
+    backup_reference: null
+    expected: Supervisor rolls back the image, then the operator restores the matching HA backup and data state.
     evidence: null
   artifact_match:
     status: blocked

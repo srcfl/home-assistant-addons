@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import pathlib
 import unittest
+from unittest import mock
+from urllib.error import URLError
 
 from scripts import release_gate
 
@@ -11,10 +14,18 @@ from scripts import release_gate
 FIXTURES = pathlib.Path(__file__).parent / "fixtures/release"
 DIGEST = "sha256:" + "d" * 64
 COMMIT = "e" * 40
+DRIVER_COMMIT = "a" * 40
+DRIVER_KEY_ID = "ftw-test-1"
+DRIVER_PUBLIC_KEY = "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
+DRIVER_SHA256 = "f62bd732896aeee3b36286d8b230fcb2d798a8d6244b4b4fe7b43bce68034099"
 
 
 def fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def raw_fixture(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
 
 
 def compatibility() -> dict:
@@ -112,6 +123,52 @@ class ImageEvidenceTests(unittest.TestCase):
         self.images["amd64"]["config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
         with self.assertRaisesRegex(release_gate.GateError, "revision label"):
             self.validate()
+
+
+class DriverManifestTests(unittest.TestCase):
+    def validate(self, raw: bytes, *, sha256: str = DRIVER_SHA256) -> dict:
+        return release_gate.validate_signed_driver_manifest(
+            raw,
+            expected_sha256=sha256,
+            expected_commit=DRIVER_COMMIT,
+            expected_key_id=DRIVER_KEY_ID,
+            public_key_base64=DRIVER_PUBLIC_KEY,
+        )
+
+    def test_exact_hash_signature_and_source_commit_pass(self) -> None:
+        payload = self.validate(raw_fixture("driver-manifest.json"))
+        self.assertEqual(payload["commit"], DRIVER_COMMIT)
+
+    def test_raw_hash_mismatch_fails(self) -> None:
+        with self.assertRaisesRegex(release_gate.GateError, "SHA-256 mismatch"):
+            self.validate(raw_fixture("driver-manifest.json"), sha256="f" * 64)
+
+    def test_signature_mismatch_fails(self) -> None:
+        envelope = fixture("driver-manifest.json")
+        envelope["signature"] = "A" * 88
+        raw = release_gate.canonical_json(envelope) + b"\n"
+        with self.assertRaisesRegex(release_gate.GateError, "signature verification failed"):
+            self.validate(raw, sha256=hashlib.sha256(raw).hexdigest())
+
+    def test_payload_commit_mismatch_fails(self) -> None:
+        with self.assertRaisesRegex(release_gate.GateError, "payload commit mismatch"):
+            release_gate.validate_signed_driver_manifest(
+                raw_fixture("driver-manifest.json"),
+                expected_sha256=DRIVER_SHA256,
+                expected_commit="b" * 40,
+                expected_key_id=DRIVER_KEY_ID,
+                public_key_base64=DRIVER_PUBLIC_KEY,
+            )
+
+    def test_driver_source_commit_mismatch_fails(self) -> None:
+        raw = raw_fixture("driver-manifest-wrong-source.json")
+        with self.assertRaisesRegex(release_gate.GateError, "driver source commit mismatch"):
+            self.validate(raw, sha256=hashlib.sha256(raw).hexdigest())
+
+    def test_network_error_fails_closed(self) -> None:
+        with mock.patch.object(release_gate, "urlopen", side_effect=URLError("offline")):
+            with self.assertRaisesRegex(release_gate.GateError, "could not download"):
+                release_gate.download_driver_manifest("https://example.com/manifest.json")
 
 
 class StableGateTests(unittest.TestCase):

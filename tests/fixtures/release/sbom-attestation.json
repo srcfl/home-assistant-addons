@@ -1,0 +1,23 @@
+[
+  {
+    "verificationResult": {
+      "statement": {
+        "predicateType": "https://spdx.dev/Document/v2.3",
+        "subject": [
+          {
+            "name": "ghcr.io/srcfl/home-assistant-addons/amd64-ftw",
+            "digest": {
+              "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+            }
+          }
+        ],
+        "predicate": {
+          "SPDXID": "SPDXRef-DOCUMENT",
+          "spdxVersion": "SPDX-2.3",
+          "name": "fixture-sbom",
+          "dataLicense": "CC0-1.0"
+        }
+      }
+    }
+  }
+]

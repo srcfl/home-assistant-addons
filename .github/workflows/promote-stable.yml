@@ -77,6 +77,14 @@ jobs:
           PY
           actual="$(docker buildx imagetools inspect "${IMAGE}:${BETA_VERSION}" --format '{{.Manifest.Digest}}')"
           test "${actual}" = "${BETA_DIGEST}"
+      - name: Verify the beta manifest signature
+        uses: home-assistant/builder/actions/cosign-verify@2026.06.0
+        with:
+          image: ${{ env.IMAGE }}@${{ inputs.beta_digest }}
+          cosign-identity: >-
+            https://github.com/srcfl/home-assistant-addons/.github/workflows/release-beta.yml@refs/heads/main
+          cosign-issuer: https://token.actions.githubusercontent.com
+          allow-failure: false
       - name: Promote without a build
         env:
           VERSION: ${{ inputs.version }}

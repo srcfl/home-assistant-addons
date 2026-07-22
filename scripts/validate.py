@@ -52,7 +52,7 @@ def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
     require(config.get("image") == "ghcr.io/srcfl/home-assistant-addons/ftw", "app image name is wrong")
     require(config.get("host_network") is True, "FTW needs host networking for local device access")
     require(config.get("backup") == "cold", "FTW backups must be cold")
-    require(config.get("stage") == "experimental", "app stage stays experimental until stable qualification")
+    require(config.get("stage", "stable") in ("experimental", "stable"), "app stage is invalid")
 
     environment = config.get("environment")
     require(isinstance(environment, dict), "app environment must be an object")
@@ -116,8 +116,9 @@ def require_release_values(compat: dict[str, Any], *, require_app_digest: bool) 
         require(DIGEST.fullmatch(str(app["manifest_digest"])) is not None, "add-on manifest digest is invalid")
     else:
         require(
-            app.get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__",
-            "beta input must let the publisher record the add-on digest",
+            app.get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__"
+            or DIGEST.fullmatch(str(app.get("manifest_digest"))) is not None,
+            "beta add-on digest must be the publisher marker or a published digest",
         )
     require(DIGEST.fullmatch(str(core["digest"])) is not None, "Core digest is invalid")
     require(COMMIT.fullmatch(str(core["commit"])) is not None, "Core commit is invalid")
@@ -130,6 +131,7 @@ def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any
     if channel == "bootstrap":
         require(version == "0.0.0-dev", "bootstrap config version must be 0.0.0-dev")
         require(compat["add_on"].get("channel") == "bootstrap", "bootstrap compatibility channel is wrong")
+        require(config.get("stage") == "experimental", "bootstrap app stage must be experimental")
         return
 
     require_release_values(compat, require_app_digest=channel == "stable")
@@ -141,31 +143,38 @@ def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any
     if channel == "beta":
         require(BETA_SEMVER.fullmatch(version) is not None, "beta version must match X.Y.Z-beta.N")
         require(compat["add_on"].get("channel") == "beta", "compatibility channel must be beta")
+        require(config.get("stage") == "experimental", "beta app stage must be experimental")
         return
 
     require(SEMVER.fullmatch(version) is not None, "stable version must match X.Y.Z")
     require(compat["add_on"].get("channel") == "stable", "compatibility channel must be stable")
+    require("stage" not in config, "stable must use Home Assistant's default stable stage")
     ha_gate = qualification.get("home_assistant_os_supervisor", {})
     require(ha_gate.get("status") == "passed", "Home Assistant OS and Supervisor pilot has not passed")
     require(ha_gate.get("evidence"), "Home Assistant pilot evidence is missing")
     promoted = qualification.get("promoted_from_beta", {})
     require(BETA_SEMVER.fullmatch(str(promoted.get("version", ""))) is not None, "promoted beta version is missing")
+    require(str(promoted["version"]).split("-beta.", 1)[0] == version, "stable and beta SemVer bases differ")
     require(promoted.get("manifest_digest") == compat["add_on"]["manifest_digest"], "stable digest differs from beta")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--channel", choices=("bootstrap", "beta", "stable"), default="bootstrap")
+    parser.add_argument("--channel", choices=("auto", "bootstrap", "beta", "stable"), default="auto")
     args = parser.parse_args()
     try:
         config = load_yaml(ROOT / "ftw" / "config.yaml")
         compat = load_yaml(ROOT / "compatibility.yaml")
+        channel = args.channel
+        if channel == "auto":
+            channel = str(compat.get("add_on", {}).get("channel", ""))
+            require(channel in ("bootstrap", "beta", "stable"), "compatibility channel is invalid")
         validate_common(config, compat)
-        validate_channel(args.channel, config, compat)
+        validate_channel(channel, config, compat)
     except (OSError, yaml.YAMLError, ValidationError) as error:
         print(f"validation failed: {error}", file=sys.stderr)
         return 1
-    print(f"repository validation passed for {args.channel}")
+    print(f"repository validation passed for {channel}")
     return 0
 
 

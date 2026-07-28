@@ -115,10 +115,12 @@ wait_for_exit() {
 prepare_paths
 
 # These values also exist in config.yaml and the image. Export them here so a
-# future injected environment cannot turn self-update or process transport on.
+# future injected environment cannot turn self-update or process transport on,
+# or make Core present itself as anything but the Home Assistant bundle.
 export FTW_SELFUPDATE_ENABLED=0
 export FTW_OPTIMIZER_TRANSPORT=unix
 export FTW_OPTIMIZER_SOCKET="${optimizer_socket}"
+export FTW_BUNDLE=home_assistant_addon
 
 trap request_stop TERM INT
 

@@ -40,7 +40,9 @@ RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.py \
 ENV HOME=/data \
     FTW_SELFUPDATE_ENABLED=0 \
     FTW_OPTIMIZER_TRANSPORT=unix \
-    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock
+    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock \
+    FTW_BUNDLE=home_assistant_addon \
+    FTW_BUNDLE_VERSION=${BUILD_VERSION}
 
 LABEL io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}" \

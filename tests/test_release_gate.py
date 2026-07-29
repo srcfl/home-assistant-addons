@@ -455,19 +455,20 @@ class SbomEvidenceTests(unittest.TestCase):
 
 class BetaManifestTests(unittest.TestCase):
     def test_resume_manifest_keeps_original_source_and_inputs(self) -> None:
+        compat = release_gate.load_yaml(release_gate.ROOT / "compatibility.yaml")
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "release-manifest.json"
             release_gate.write_beta_release_manifest(
                 path=path,
-                version="0.1.0-beta.1",
+                version=str(compat["add_on"]["version"]),
                 digest=DIGEST,
                 source_commit=COMMIT,
             )
             manifest = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["source_commit"], COMMIT)
         self.assertEqual(manifest["manifest_digest"], DIGEST)
-        self.assertEqual(manifest["core"]["version"], "v1.10.0-beta.1")
-        self.assertEqual(manifest["optimizer"]["version"], "v1.3.2-beta.1")
+        self.assertEqual(manifest["core"]["version"], compat["core"]["version"])
+        self.assertEqual(manifest["optimizer"]["version"], compat["optimizer"]["version"])
         self.assertNotIn("updater", manifest)
 
 class DriverManifestTests(unittest.TestCase):

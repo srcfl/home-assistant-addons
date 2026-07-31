@@ -19,6 +19,27 @@ Until setup writes `/data/config.yaml`, the container health check tests the
 setup page. After that file exists, it requires valid JSON from Core's
 `/api/status` endpoint after Core opens its state.
 
+## Devices named `zap.local`
+
+FTW can be pointed at a device by its `.local` name instead of its IP address,
+which matters because a DHCP lease can move a device and silently break a
+connection bound to a raw IP.
+
+FTW resolves those names itself, by asking the local network directly. It does
+not use the operating system's resolver and does not need any Home Assistant
+setting turned on. What it does need is the host networking this app already
+uses — that is what puts it on the same network segment as the device.
+
+Two consequences worth knowing:
+
+- On Home Assistant this always uses the direct path. Elsewhere FTW can hand
+  `.local` lookups to a host `avahi-daemon` over a Unix socket, but Supervisor
+  gives an add-on no way to bind an arbitrary host path, so that option does not
+  exist here. Nothing is lost — the direct path needs no host software.
+- A failed lookup is logged as `mDNS resolution failed`. If you see it, the
+  device is usually off, asleep, or on a different subnet or VLAN than Home
+  Assistant. Configuring that device by IP is the workaround.
+
 ## Data and drivers
 
 Home Assistant keeps `/data` across restarts and updates. It contains FTW's

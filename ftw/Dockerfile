@@ -30,9 +30,15 @@ USER root
 #
 # libnss-mdns is deliberately NOT installed here, unlike in the Core image. It
 # only forwards to avahi-daemon over /run/avahi-daemon/socket, and Supervisor
-# gives an add-on no way to bind an arbitrary host path, so it would resolve
-# nothing. FTW resolves ".local" device names in-process instead, which is what
-# host_network in config.yaml is for.
+# gives an app no way to bind an arbitrary host path, so it would resolve
+# nothing. There is no avahi on HA OS to reach in any case — the multicast
+# plugin is mdns-repeater, a packet relay with no query API.
+#
+# It is not needed. Supervisor points this container at its own CoreDNS, which
+# carries an mdns plugin backed by systemd-resolved, and that answers ".local"
+# over ordinary unicast DNS — confirmed on a pilot install, where a lookup
+# failure reads "on 172.30.32.3:53". host_network in config.yaml is what puts
+# the app on the device's network segment.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates tini tzdata \

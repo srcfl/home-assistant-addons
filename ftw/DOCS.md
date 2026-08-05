@@ -31,15 +31,46 @@ configured as `zap.local` resolves like any other name. Verified on a pilot
 install: a device that had moved off its configured IP address was still reached
 by name, while the address itself returned `no route to host`.
 
-Two consequences worth knowing:
+### What this depends on
 
-- The host networking this app uses is what puts it on the same network segment
-  as the device. Names on another subnet or VLAN cannot be reached whatever
-  resolves them.
-- A failed lookup appears in the log as `lookup <name> ... no such host`. The
-  device is usually off, asleep, or on a different network than Home Assistant.
-  Configuring it by IP address is the workaround, at the cost of breaking again
-  the next time its DHCP lease moves.
+Nothing you have to install, and nothing this app could install for you. The
+three requirements are all things a working Home Assistant already has.
+
+**Home Assistant's own DNS service.** Supervisor runs five built-in
+services — CLI, DNS, audio, observer and multicast — and starts them itself on
+every system. They are not add-ons: they cannot be installed, removed or
+requested, and an app has no way to declare a dependency on one. If the DNS
+service ever fails to start, Supervisor raises it as a repairable system issue
+of its own accord. The `.local` answer comes from that service.
+
+**`systemd-resolved` on the host.** Home Assistant's DNS service answers
+`.local` by asking the host's resolver, so the host has to have one.
+
+- **Home Assistant OS** — always present. Nothing to do.
+- **Home Assistant Supervised** — present if you followed the documented
+  installation, whose first step converts the host to NetworkManager and
+  `systemd-resolved`. On a host where that step was skipped, `.local` names will
+  not resolve and devices must be configured by IP address.
+
+**The device on the same network segment.** This app already uses host
+networking, which is what puts it there. A device on another subnet or VLAN
+cannot be reached by name no matter what resolves it.
+
+### When a name does not resolve
+
+The log says which resolver was asked:
+
+```
+lookup zap.local on 172.30.32.3:53: no such host
+```
+
+`172.30.32.3` is Home Assistant's DNS service, so seeing it means the request
+reached the right place and the answer was genuinely "no such name" — the device
+is off, asleep, or on a different network. A different address there, or a
+timeout instead of `no such host`, points at the host resolver instead.
+
+Configuring the device by IP address is the workaround, at the cost of breaking
+again the next time its DHCP lease moves.
 
 ## Data and drivers
 

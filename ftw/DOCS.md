@@ -99,6 +99,10 @@ then stays capped, so the worker can return without a container restart.
 Home Assistant Supervisor owns app updates and rollback. FTW self-update is
 off and the FTW updater is not in this image.
 
+Because Core and the Optimizer ship together in one image, the FTW web
+interface reports the single bundled FTW version under Settings → System
+instead of per-container component versions with update buttons.
+
 Before each update, take a Home Assistant backup. If a beta fails, restore the
 prior app version and its matching backup. Stable promotion reuses the exact
 beta manifest digest that passed the Home Assistant OS and Supervisor pilot.

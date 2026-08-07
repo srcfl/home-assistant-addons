@@ -1,8 +1,8 @@
-# Tracks the base of the real Optimizer image, which moved to
-# python:3.12-slim-trixie in srcfl/ftw#731. The add-on's own runtime layer is
+# Tracks the base of the real Optimizer image, which now uses
+# python:3.14-slim-trixie after srcfl/ftw#788. The add-on's own runtime layer is
 # built on top of this image, so the fixture has to match the suite the real
 # `apt-get install` will run against.
-FROM python:3.12-slim-trixie
+FROM python:3.14-slim-trixie
 
 ENV FTW_OPTIMIZER_VERSION=fixture \
     FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock

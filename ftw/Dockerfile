@@ -23,8 +23,8 @@ USER root
 # revisions in its normal index, so pinning this small runtime set would break
 # later rebuilds without adding a stronger release guarantee.
 #
-# The suite comes from FTW_OPTIMIZER_FROM, which moved to
-# python:3.12-slim-trixie in srcfl/ftw#731. Verified on that base: all three
+# The suite comes from FTW_OPTIMIZER_FROM, which now uses
+# python:3.14-slim-trixie after srcfl/ftw#788. Verified on that base: all three
 # packages resolve and tini still lands at /usr/bin/tini, which the ENTRYPOINT
 # below depends on.
 #
@@ -57,7 +57,9 @@ RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.py \
 ENV HOME=/data \
     FTW_SELFUPDATE_ENABLED=0 \
     FTW_OPTIMIZER_TRANSPORT=unix \
-    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock
+    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock \
+    FTW_BUNDLE=home_assistant_addon \
+    FTW_BUNDLE_VERSION=${BUILD_VERSION}
 
 LABEL io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}" \

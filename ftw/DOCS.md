@@ -25,16 +25,18 @@ FTW can be pointed at a device by its `.local` name instead of its IP address,
 which matters because a DHCP lease can move a device and silently break a
 connection bound to a raw IP.
 
-On Home Assistant this needs nothing turned on. Supervisor already points every
-app at its own DNS server, and that server answers `.local` names, so a device
-configured as `zap.local` resolves like any other name. Verified on a pilot
-install: a device that had moved off its configured IP address was still reached
-by name, while the address itself returned `no route to host`.
+On a normal Home Assistant host, with the device on the same network segment,
+this needs nothing turned on. Supervisor points every app at its own DNS server,
+and that server answers `.local` names, so a device configured as `zap.local`
+resolves like any other name. Verified on a pilot install: a device that had
+moved off its configured IP address was still reached by name, while the address
+itself returned `no route to host`.
 
 ### What this depends on
 
-Nothing you have to install, and nothing this app could install for you. The
-three requirements are all things a working Home Assistant already has.
+On the same network segment, there is nothing you have to install and nothing
+this app could install for you. A working Home Assistant already has the needed
+DNS and host resolver.
 
 **Home Assistant's own DNS service.** Supervisor runs five built-in
 services — CLI, DNS, audio, observer and multicast — and starts them itself on
@@ -52,9 +54,11 @@ of its own accord. The `.local` answer comes from that service.
   `systemd-resolved`. On a host where that step was skipped, `.local` names will
   not resolve and devices must be configured by IP address.
 
-**The device on the same network segment.** This app already uses host
-networking, which is what puts it there. A device on another subnet or VLAN
-cannot be reached by name no matter what resolves it.
+**A working mDNS path to the device.** This app uses host networking, so it can
+use the host's network interfaces. mDNS stays on one network segment by default.
+A device on another subnet or VLAN needs an mDNS reflector or repeater between
+the networks, and normal network rules must allow traffic to the resolved
+address.
 
 ### When a name does not resolve
 
@@ -65,12 +69,13 @@ lookup zap.local on 172.30.32.3:53: no such host
 ```
 
 `172.30.32.3` is Home Assistant's DNS service, so seeing it means the request
-reached the right place and the answer was genuinely "no such name" — the device
-is off, asleep, or on a different network. A different address there, or a
-timeout instead of `no such host`, points at the host resolver instead.
+reached that service. Its mDNS plugin asks `systemd-resolved`; `no such host`
+does not prove that the device is absent. It can also mean that the device has
+stopped advertising, multicast traffic is blocked or not repeated between
+networks, or the host resolver is not working.
 
-Configuring the device by IP address is the workaround, at the cost of breaking
-again the next time its DHCP lease moves.
+If the address is routable, configuring the device by IP is the fallback. It can
+break again the next time its DHCP lease moves.
 
 ## Data and drivers
 

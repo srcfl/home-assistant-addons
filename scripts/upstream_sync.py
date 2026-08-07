@@ -35,7 +35,10 @@ ADD_ON_BETA = re.compile(r"^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$")
 ADD_ON_STABLE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
-UPSTREAM_URL = re.compile(r"https://github\.com/srcfl/ftw/[^\s<>()\[\]]+")
+LIVE_PILOT_URL = re.compile(
+    r"^https://github\.com/srcfl/ftw/"
+    r"(?:(?:pull|issues)/\d+#issuecomment-\d+|actions/runs/\d+(?:[/?#][^\s]*)?)$"
+)
 ABSENT_IMAGE_MARKERS = ("manifest unknown", "name unknown", "not found")
 MAX_VERSION_PROBES = 200
 PILOT_EXPECTED = {
@@ -150,7 +153,7 @@ def strip_url(url: str) -> str:
     return url.rstrip(".,;:!?'\"")
 
 
-def extract_live_pilot_evidence(body: str | None, fallback: str) -> str:
+def extract_live_pilot_evidence(body: str | None) -> str | None:
     text = body or ""
     labeled = re.search(
         r"live[\s_-]?pilot[^\n]*?(https://github\.com/srcfl/ftw/[^\s<>()\[\]]+)",
@@ -158,12 +161,10 @@ def extract_live_pilot_evidence(body: str | None, fallback: str) -> str:
         re.IGNORECASE,
     )
     if labeled is not None:
-        return strip_url(labeled.group(1))
-    for match in UPSTREAM_URL.finditer(text):
-        url = strip_url(match.group(0))
-        if "pilot" in url.lower():
+        url = strip_url(labeled.group(1))
+        if LIVE_PILOT_URL.fullmatch(url) is not None:
             return url
-    return fallback
+    return None
 
 
 def image_labels(image: dict[str, Any]) -> dict[str, str]:
@@ -395,13 +396,18 @@ def compose_updates(
     upstream_gate = updated["qualification"]["upstream_gate"]
     evidence = dict(upstream_gate.get("evidence") or {})
     if core_pin is not None:
+        live_pilot = extract_live_pilot_evidence(core_pin["body"])
+        require(
+            live_pilot is not None,
+            f"Core {core_pin['version']} release lacks labeled live-pilot evidence",
+        )
         core = updated["core"]
         core["version"] = core_pin["version"]
         core["digest"] = core_pin["digest"]
         core["commit"] = core_pin["commit"]
         evidence["core_release"] = core_pin["release_url"]
         evidence["core_build"] = core_pin["build_url"]
-        evidence["core_live_pilot"] = extract_live_pilot_evidence(core_pin["body"], core_pin["release_url"])
+        evidence["core_live_pilot"] = live_pilot
     if optimizer_pin is not None:
         optimizer = updated["optimizer"]
         optimizer["version"] = optimizer_pin["version"]
@@ -545,6 +551,13 @@ def sync(args: argparse.Namespace) -> None:
 
     if core_pin is None and optimizer_pin is None:
         print("pins already match the latest upstream releases")
+        write_output("changed", "false")
+        return
+
+    if core_pin is not None and extract_live_pilot_evidence(core_pin["body"]) is None:
+        print(
+            f"::notice::Core {core_pin['version']} has no labeled live-pilot evidence; retrying later"
+        )
         write_output("changed", "false")
         return
 

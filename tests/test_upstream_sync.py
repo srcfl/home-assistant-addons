@@ -23,7 +23,10 @@ def release(tag: str, *, draft: bool = False, body: str = "") -> dict:
     }
 
 
-def core_pin(version: str = "v1.11.0", body: str = "") -> dict:
+def core_pin(
+    version: str = "v1.11.0",
+    body: str = "Live pilot: https://github.com/srcfl/ftw/pull/700#issuecomment-1",
+) -> dict:
     return {
         "version": version,
         "digest": CORE_DIGEST,
@@ -122,20 +125,27 @@ class LivePilotEvidenceTests(unittest.TestCase):
             "Live pilot: https://github.com/srcfl/ftw/pull/623#issuecomment-5042911361.\n"
         )
         self.assertEqual(
-            upstream_sync.extract_live_pilot_evidence(body, "https://github.com/srcfl/ftw/releases/tag/v1"),
+            upstream_sync.extract_live_pilot_evidence(body),
             "https://github.com/srcfl/ftw/pull/623#issuecomment-5042911361",
         )
 
-    def test_pilot_url_is_found_without_a_label(self) -> None:
+    def test_unlabeled_pilot_url_is_rejected(self) -> None:
         body = "Qualified via https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite"
+        self.assertIsNone(upstream_sync.extract_live_pilot_evidence(body))
+
+    def test_labeled_action_run_is_accepted(self) -> None:
+        body = "Live pilot: https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite"
         self.assertEqual(
-            upstream_sync.extract_live_pilot_evidence(body, "fallback"),
+            upstream_sync.extract_live_pilot_evidence(body),
             "https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite",
         )
 
-    def test_release_url_is_the_fallback(self) -> None:
-        fallback = "https://github.com/srcfl/ftw/releases/tag/v1.11.0"
-        self.assertEqual(upstream_sync.extract_live_pilot_evidence("no links here", fallback), fallback)
+    def test_labeled_release_page_is_not_pilot_evidence(self) -> None:
+        body = "Live pilot: https://github.com/srcfl/ftw/releases/tag/v1.11.0"
+        self.assertIsNone(upstream_sync.extract_live_pilot_evidence(body))
+
+    def test_release_without_pilot_evidence_is_rejected(self) -> None:
+        self.assertIsNone(upstream_sync.extract_live_pilot_evidence("no links here"))
 
 
 class FileRewriteTests(unittest.TestCase):
@@ -192,6 +202,10 @@ class ComposeUpdatesTests(unittest.TestCase):
             validate.validate_common(config, compat)
             validate.validate_channel("beta", config, compat)
         self.assertIn(f"## {self.new_version}", changelog)
+
+    def test_core_bump_without_labeled_live_pilot_fails_closed(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "live-pilot evidence"):
+            self.compose(core=core_pin(body=""), optimizer=None)
 
     def test_round_tripped_yaml_passes_the_same_validation(self) -> None:
         compat, config_text, _, pilot = self.compose(core=core_pin(), optimizer=optimizer_pin())

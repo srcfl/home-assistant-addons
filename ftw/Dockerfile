@@ -22,6 +22,23 @@ USER root
 # Release inputs and outputs use image digests. Debian does not keep old package
 # revisions in its normal index, so pinning this small runtime set would break
 # later rebuilds without adding a stronger release guarantee.
+#
+# The suite comes from FTW_OPTIMIZER_FROM, which now uses
+# python:3.14-slim-trixie after srcfl/ftw#788. Verified on that base: all three
+# packages resolve and tini still lands at /usr/bin/tini, which the ENTRYPOINT
+# below depends on.
+#
+# libnss-mdns is deliberately NOT installed here, unlike in the Core image. It
+# only forwards to avahi-daemon over /run/avahi-daemon/socket, and Supervisor
+# gives an app no way to bind an arbitrary host path, so it would resolve
+# nothing. There is no avahi on HA OS to reach in any case — the multicast
+# plugin is mdns-repeater, a packet relay with no query API.
+#
+# It is not needed. Supervisor points this container at its own CoreDNS, which
+# carries an mdns plugin backed by systemd-resolved, and that answers ".local"
+# over ordinary unicast DNS — confirmed on a pilot install, where a lookup
+# failure reads "on 172.30.32.3:53". host_network in config.yaml is what puts
+# the app on the device's network segment.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates tini tzdata \
@@ -40,7 +57,9 @@ RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.py \
 ENV HOME=/data \
     FTW_SELFUPDATE_ENABLED=0 \
     FTW_OPTIMIZER_TRANSPORT=unix \
-    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock
+    FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock \
+    FTW_BUNDLE=home_assistant_addon \
+    FTW_BUNDLE_VERSION=${BUILD_VERSION}
 
 LABEL io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}" \

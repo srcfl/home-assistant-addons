@@ -19,6 +19,9 @@ class SyncWorkflowTests(unittest.TestCase):
         self.assertIn("group: ftw-upstream-sync", SYNC)
         self.assertIn("cancel-in-progress: false", SYNC)
 
+    def test_sync_only_runs_in_the_canonical_repository(self) -> None:
+        self.assertIn("if: github.repository == 'srcfl/home-assistant-addons'", SYNC)
+
     def test_sync_cannot_write_packages(self) -> None:
         self.assertNotIn("packages: write", SYNC)
         self.assertIn("packages: read", SYNC)
@@ -46,17 +49,28 @@ class SyncWorkflowTests(unittest.TestCase):
 
     def test_sync_merges_only_after_dispatching_checks(self) -> None:
         checks = SYNC.index("name: Run checks on the PR branch")
+        watch = SYNC.index('gh run watch "${RUN_ID}" --exit-status')
         merge = SYNC.index("name: Merge when checks pass")
+        merge_command = SYNC.index('gh pr merge "${PR}" --squash')
         publish = SYNC.index("name: Trigger beta publication")
         self.assertLess(checks, merge)
+        self.assertLess(merge, watch)
+        self.assertLess(watch, merge_command)
         self.assertLess(merge, publish)
-        self.assertIn('gh run watch "${RUN_ID}" --exit-status', SYNC)
+        self.assertNotIn("--auto", SYNC)
+        self.assertIn('--match-head-commit "${HEAD_SHA}"', SYNC)
+        self.assertIn('--delete-branch', SYNC)
+        self.assertIn('git/ref/heads/main', SYNC)
 
 
 class AutoPublishWorkflowTests(unittest.TestCase):
-    def test_publish_shares_the_beta_publication_concurrency_group(self) -> None:
-        self.assertIn("group: ftw-beta-publication", AUTO_PUBLISH)
+    def test_publish_serializes_dispatch_without_holding_the_release_group(self) -> None:
+        self.assertIn("group: ftw-beta-dispatch", AUTO_PUBLISH)
+        self.assertNotIn("group: ftw-beta-publication", AUTO_PUBLISH)
         self.assertIn("cancel-in-progress: false", AUTO_PUBLISH)
+
+    def test_publish_only_runs_in_the_canonical_repository(self) -> None:
+        self.assertIn("if: github.repository == 'srcfl/home-assistant-addons'", AUTO_PUBLISH)
 
     def test_publish_only_dispatches_the_existing_release_workflow(self) -> None:
         self.assertIn("gh workflow run release-beta.yml --ref main", AUTO_PUBLISH)
@@ -75,6 +89,7 @@ class AutoPublishWorkflowTests(unittest.TestCase):
     def test_publish_requires_the_pending_beta_marker(self) -> None:
         self.assertIn("__PUBLISHED_BY_BETA_WORKFLOW__", AUTO_PUBLISH)
         self.assertIn('add_on.get("channel") == "beta"', AUTO_PUBLISH)
+        self.assertIn('add_on.get("version") == version', AUTO_PUBLISH)
         self.assertIn("steps.state.outputs.pending == 'true'", AUTO_PUBLISH)
 
     def test_publish_guards_against_existing_and_active_releases(self) -> None:
@@ -85,6 +100,7 @@ class AutoPublishWorkflowTests(unittest.TestCase):
         self.assertLess(tag_guard, release_guard)
         self.assertLess(release_guard, active_guard)
         self.assertLess(active_guard, dispatch)
+        self.assertIn("--workflow=finalize-beta.yml", AUTO_PUBLISH)
 
 
 if __name__ == "__main__":

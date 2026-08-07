@@ -19,6 +19,64 @@ Until setup writes `/data/config.yaml`, the container health check tests the
 setup page. After that file exists, it requires valid JSON from Core's
 `/api/status` endpoint after Core opens its state.
 
+## Devices named `zap.local`
+
+FTW can be pointed at a device by its `.local` name instead of its IP address,
+which matters because a DHCP lease can move a device and silently break a
+connection bound to a raw IP.
+
+On a normal Home Assistant host, with the device on the same network segment,
+this needs nothing turned on. Supervisor points every app at its own DNS server,
+and that server answers `.local` names, so a device configured as `zap.local`
+resolves like any other name. Verified on a pilot install: a device that had
+moved off its configured IP address was still reached by name, while the address
+itself returned `no route to host`.
+
+### What this depends on
+
+On the same network segment, there is nothing you have to install and nothing
+this app could install for you. A working Home Assistant already has the needed
+DNS and host resolver.
+
+**Home Assistant's own DNS service.** Supervisor runs five built-in
+services — CLI, DNS, audio, observer and multicast — and starts them itself on
+every system. They are not add-ons: they cannot be installed, removed or
+requested, and an app has no way to declare a dependency on one. If the DNS
+service ever fails to start, Supervisor raises it as a repairable system issue
+of its own accord. The `.local` answer comes from that service.
+
+**`systemd-resolved` on the host.** Home Assistant's DNS service answers
+`.local` by asking the host's resolver, so the host has to have one.
+
+- **Home Assistant OS** — always present. Nothing to do.
+- **Home Assistant Supervised** — present if you followed the documented
+  installation, whose first step converts the host to NetworkManager and
+  `systemd-resolved`. On a host where that step was skipped, `.local` names will
+  not resolve and devices must be configured by IP address.
+
+**A working mDNS path to the device.** This app uses host networking, so it can
+use the host's network interfaces. mDNS stays on one network segment by default.
+A device on another subnet or VLAN needs an mDNS reflector or repeater between
+the networks, and normal network rules must allow traffic to the resolved
+address.
+
+### When a name does not resolve
+
+The log says which resolver was asked:
+
+```
+lookup zap.local on 172.30.32.3:53: no such host
+```
+
+`172.30.32.3` is Home Assistant's DNS service, so seeing it means the request
+reached that service. Its mDNS plugin asks `systemd-resolved`; `no such host`
+does not prove that the device is absent. It can also mean that the device has
+stopped advertising, multicast traffic is blocked or not repeated between
+networks, or the host resolver is not working.
+
+If the address is routable, configuring the device by IP is the fallback. It can
+break again the next time its DHCP lease moves.
+
 ## Data and drivers
 
 Home Assistant keeps `/data` across restarts and updates. It contains FTW's
@@ -45,6 +103,10 @@ then stays capped, so the worker can return without a container restart.
 
 Home Assistant Supervisor owns app updates and rollback. FTW self-update is
 off and the FTW updater is not in this image.
+
+Because Core and the Optimizer ship together in one image, the FTW web
+interface reports the single bundled FTW version under Settings → System
+instead of per-container component versions with update buttons.
 
 Before each update, take a Home Assistant backup. If a beta fails, restore the
 prior app version and its matching backup. Stable promotion reuses the exact

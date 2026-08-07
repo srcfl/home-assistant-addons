@@ -14,12 +14,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftw-beta-publication
+  group: ftw-beta-dispatch
   cancel-in-progress: false
 
 jobs:
   dispatch:
     name: Publish the unreleased beta version
+    if: github.repository == 'srcfl/home-assistant-addons'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -52,6 +53,7 @@ jobs:
           pending = (
               re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+", version) is not None
               and add_on.get("channel") == "beta"
+              and add_on.get("version") == version
               and add_on.get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as target:
@@ -73,11 +75,14 @@ jobs:
             echo "::notice::release ${tag} already exists; nothing to publish"
             exit 0
           fi
-          active="$(gh run list --workflow=release-beta.yml \
+          active_release="$(gh run list --workflow=release-beta.yml --limit 100 \
             --json status \
             --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
-          if [ "${active}" != "0" ]; then
-            echo "::notice::a Publish beta run is already active; skipping dispatch"
+          active_finalize="$(gh run list --workflow=finalize-beta.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          if [ "${active_release}" != "0" ] || [ "${active_finalize}" != "0" ]; then
+            echo "::notice::a beta publication or finalizer is already active; skipping dispatch"
             exit 0
           fi
           gh workflow run release-beta.yml --ref main -f "version=${VERSION}"

@@ -21,6 +21,7 @@ env:
 jobs:
   sync:
     name: Pin the latest upstream release
+    if: github.repository == 'srcfl/home-assistant-addons'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -69,7 +70,7 @@ jobs:
           git config user.email "${BOT_EMAIL}"
           git checkout -B "${BRANCH}"
           git add compatibility.yaml ftw/config.yaml ftw/CHANGELOG.md pilot
-          git commit -m "${TITLE}"
+          git commit --signoff -m "${TITLE}"
           git push --force origin "HEAD:refs/heads/${BRANCH}"
           if ! gh pr view "${BRANCH}" --json url --jq .url >/dev/null 2>&1; then
             gh pr create \
@@ -88,6 +89,7 @@ jobs:
           BRANCH: ${{ steps.sync.outputs.branch }}
         run: |
           head_sha="$(git rev-parse HEAD)"
+          base_sha="$(git rev-parse HEAD^)"
           gh workflow run check.yml --ref "${BRANCH}"
           run_id=""
           for _ in $(seq 1 24); do
@@ -99,19 +101,21 @@ jobs:
           done
           test -n "${run_id}"
           echo "run_id=${run_id}" >>"${GITHUB_OUTPUT}"
+          echo "head_sha=${head_sha}" >>"${GITHUB_OUTPUT}"
+          echo "base_sha=${base_sha}" >>"${GITHUB_OUTPUT}"
       - name: Merge when checks pass
         if: steps.sync.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
           RUN_ID: ${{ steps.checks.outputs.run_id }}
+          HEAD_SHA: ${{ steps.checks.outputs.head_sha }}
+          BASE_SHA: ${{ steps.checks.outputs.base_sha }}
         run: |
-          if gh pr merge "${PR}" --squash --auto; then
-            echo "auto-merge is enabled; branch protection completes the merge"
-          else
-            gh run watch "${RUN_ID}" --exit-status
-            gh pr merge "${PR}" --squash
-          fi
+          gh run watch "${RUN_ID}" --exit-status
+          test "$(gh pr view "${PR}" --json headRefOid --jq .headRefOid)" = "${HEAD_SHA}"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)" = "${BASE_SHA}"
+          gh pr merge "${PR}" --squash --delete-branch --match-head-commit "${HEAD_SHA}"
       - name: Trigger beta publication
         if: steps.sync.outputs.changed == 'true'
         env:

@@ -1,0 +1,89 @@
+name: Auto publish beta
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ftw/config.yaml
+      - compatibility.yaml
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftw-beta-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Publish the unreleased beta version
+    if: github.repository == 'srcfl/home-assistant-addons'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: python -m pip install -r scripts/requirements.txt
+      - id: state
+        name: Read the pending beta version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          import yaml
+
+          config = yaml.safe_load(pathlib.Path("ftw/config.yaml").read_text(encoding="utf-8"))
+          compat = yaml.safe_load(pathlib.Path("compatibility.yaml").read_text(encoding="utf-8"))
+          version = str(config.get("version", ""))
+          add_on = compat.get("add_on", {})
+          pending = (
+              re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+", version) is not None
+              and add_on.get("channel") == "beta"
+              and add_on.get("version") == version
+              and add_on.get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as target:
+              target.write(f"version={version}\n")
+              target.write(f"pending={'true' if pending else 'false'}\n")
+          PY
+      - name: Dispatch Publish beta
+        if: steps.state.outputs.pending == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.version }}
+        run: |
+          tag="ftw-v${VERSION}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "::notice::${tag} already exists; nothing to publish"
+            exit 0
+          fi
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::notice::release ${tag} already exists; nothing to publish"
+            exit 0
+          fi
+          active_release="$(gh run list --workflow=release-beta.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          active_finalize="$(gh run list --workflow=finalize-beta.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          if [ "${active_release}" != "0" ] || [ "${active_finalize}" != "0" ]; then
+            echo "::notice::a beta publication or finalizer is already active; skipping dispatch"
+            exit 0
+          fi
+          gh workflow run release-beta.yml --ref main -f "version=${VERSION}"
+          echo "::notice::dispatched Publish beta for ${VERSION}"

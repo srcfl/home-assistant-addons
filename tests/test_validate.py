@@ -15,16 +15,17 @@ SOURCE_COMMIT = "e" * 40
 class PilotRecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
-        self.record = validate.load_yaml(validate.ROOT / "pilot/0.1.0-beta.1.yaml")
+        self.version = str(self.compat["add_on"]["version"])
+        self.record = validate.load_yaml(validate.ROOT / f"pilot/{self.version}.yaml")
 
     def test_candidate_and_blocked_checks_pass(self) -> None:
-        validate.validate_pilot("0.1.0-beta.1", self.compat)
+        validate.validate_pilot(self.version, self.compat)
 
     def test_driver_commit_mismatch_fails(self) -> None:
         compat = copy.deepcopy(self.compat)
         compat["drivers"]["tested_baseline"]["commit"] = "f" * 40
         with self.assertRaisesRegex(validate.ValidationError, "pilot driver commit differs"):
-            validate.validate_pilot("0.1.0-beta.1", compat)
+            validate.validate_pilot(self.version, compat)
 
     def test_passed_check_needs_evidence(self) -> None:
         record = copy.deepcopy(self.record)
@@ -37,10 +38,10 @@ class PilotRecordTests(unittest.TestCase):
         compat["qualification"]["home_assistant_os_supervisor"] = {
             "status": "passed",
             "evidence": "https://example.com/pilot",
-            "record": "pilot/0.1.0-beta.1.yaml",
+            "record": f"pilot/{self.version}.yaml",
         }
         with self.assertRaisesRegex(validate.ValidationError, "needs a passed pilot record"):
-            validate.validate_pilot("0.1.0-beta.1", compat)
+            validate.validate_pilot(self.version, compat)
 
     def test_passed_update_needs_prior_beta_coordinates(self) -> None:
         record = copy.deepcopy(self.record)
@@ -61,28 +62,30 @@ class PilotRecordTests(unittest.TestCase):
         with mock.patch.object(
             validate,
             "load_yaml",
-            side_effect=lambda path: record if path.name == "0.1.0-beta.1.yaml" else original(path),
+            side_effect=lambda path: record if path.name == f"{self.version}.yaml" else original(path),
         ):
-            validate.validate_pilot("0.1.0-beta.1", self.compat)
+            validate.validate_pilot(self.version, self.compat)
 
 
 class StablePilotTests(unittest.TestCase):
     def setUp(self) -> None:
         self.compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
-        self.record = validate.load_yaml(validate.ROOT / "pilot/0.1.0-beta.1.yaml")
+        self.beta_version = str(self.compat["add_on"]["version"])
+        self.stable_version = self.beta_version.split("-beta.", 1)[0]
+        self.record = validate.load_yaml(validate.ROOT / f"pilot/{self.beta_version}.yaml")
         self.compat["add_on"].update(
-            version="0.1.0",
+            version=self.stable_version,
             channel="stable",
             manifest_digest=APP_DIGEST,
         )
         self.compat["qualification"]["home_assistant_os_supervisor"] = {
             "status": "passed",
             "evidence": "https://example.com/ha-pilot",
-            "record": "pilot/0.1.0-beta.1.yaml",
+            "record": f"pilot/{self.beta_version}.yaml",
         }
         self.compat["qualification"]["promoted_from_beta"] = {
             "channel": "beta",
-            "version": "0.1.0-beta.1",
+            "version": self.beta_version,
             "manifest_digest": APP_DIGEST,
             "source_commit": SOURCE_COMMIT,
         }
@@ -109,9 +112,9 @@ class StablePilotTests(unittest.TestCase):
         with mock.patch.object(
             validate,
             "load_yaml",
-            side_effect=lambda path: self.record if path.name == "0.1.0-beta.1.yaml" else original(path),
+            side_effect=lambda path: self.record if path.name == f"{self.beta_version}.yaml" else original(path),
         ):
-            validate.validate_channel("stable", {"version": "0.1.0"}, self.compat)
+            validate.validate_channel("stable", {"version": self.stable_version}, self.compat)
 
     def test_exact_passed_beta_pilot_allows_stable(self) -> None:
         self.validate()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest import mock
 
@@ -148,17 +149,106 @@ class LivePilotEvidenceTests(unittest.TestCase):
         self.assertIsNone(upstream_sync.extract_live_pilot_evidence("no links here"))
 
 
+class ReleaseImageContractTests(unittest.TestCase):
+    def inspect(
+        self,
+        *,
+        image: str,
+        version: str,
+        version_label: str | None,
+        commit: str = CORE_COMMIT,
+        digest: str = CORE_DIGEST,
+    ) -> str:
+        index = {
+            "manifests": [
+                {"digest": "sha256:" + "1" * 64, "platform": {"os": "linux", "architecture": "amd64"}},
+                {"digest": "sha256:" + "2" * 64, "platform": {"os": "linux", "architecture": "arm64"}},
+            ]
+        }
+        labels = {"org.opencontainers.image.revision": commit}
+        if version_label is not None:
+            labels["org.opencontainers.image.version"] = version_label
+        child = {"config": {"Labels": labels}}
+        with (
+            mock.patch.object(upstream_sync, "optional_image_digest", return_value=digest),
+            mock.patch.object(
+                upstream_sync,
+                "command_output",
+                side_effect=(json.dumps(index), json.dumps(child), json.dumps(child)),
+            ),
+        ):
+            return upstream_sync.inspect_release_image(image, version, commit)
+
+    def test_legacy_and_current_core_labels_accept_beta_and_stable(self) -> None:
+        cases = (
+            ("v1.16.1-beta.20", "v1.16.1-beta.20"),
+            ("v1.15.0", "1.15.0"),
+            ("v2.0.0-beta.3", "2.0.0"),
+            ("v2.0.0", "2.0.0"),
+        )
+        for version, label in cases:
+            with self.subTest(version=version, label=label):
+                self.assertEqual(
+                    self.inspect(image=upstream_sync.CORE_IMAGE, version=version, version_label=label),
+                    CORE_DIGEST,
+                )
+
+    def test_wrong_core_base_or_candidate_label_fails(self) -> None:
+        for label in ("2.0.1", "v2.0.0", "1.16.1-beta.21", "v2.0.0-beta.2", None):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(upstream_sync.SyncError, "version label"):
+                    self.inspect(
+                        image=upstream_sync.CORE_IMAGE,
+                        version="v2.0.0-beta.3",
+                        version_label=label,
+                    )
+
+    def test_stable_rejects_prefixed_or_candidate_labels(self) -> None:
+        for label in ("v2.0.0", "v2.0.0-beta.3", "2.0.0-beta.3"):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(upstream_sync.SyncError, "version label"):
+                    self.inspect(
+                        image=upstream_sync.CORE_IMAGE,
+                        version="v2.0.0",
+                        version_label=label,
+                    )
+
+    def test_optimizer_does_not_accept_the_core_base_label_contract(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "version label"):
+            self.inspect(
+                image=upstream_sync.OPTIMIZER_IMAGE,
+                version="v1.4.0",
+                version_label="1.4.0",
+                commit=OPTIMIZER_COMMIT,
+                digest=OPTIMIZER_DIGEST,
+            )
+
+
 class FileRewriteTests(unittest.TestCase):
     def test_config_version_is_replaced_in_place(self) -> None:
-        text = 'name: FTW\nversion: "0.1.0-beta.1"\nslug: ftw\n'
+        text = (
+            'name: FTW\nversion: "0.1.0-beta.1"\nslug: ftw\n'
+            'environment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.1"\n'
+        )
         self.assertEqual(
             upstream_sync.replace_config_version(text, "0.1.0-beta.2"),
-            'name: FTW\nversion: "0.1.0-beta.2"\nslug: ftw\n',
+            'name: FTW\nversion: "0.1.0-beta.2"\nslug: ftw\n'
+            'environment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.2"\n',
         )
 
     def test_missing_version_line_fails(self) -> None:
         with self.assertRaisesRegex(upstream_sync.SyncError, "version line"):
-            upstream_sync.replace_config_version("name: FTW\n", "0.1.0-beta.2")
+            upstream_sync.replace_config_version(
+                'name: FTW\nenvironment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.1"\n',
+                "0.1.0-beta.2",
+            )
+
+    def test_missing_bundle_version_line_fails(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "FTW_BUNDLE_VERSION line"):
+            upstream_sync.replace_config_version(
+                'name: FTW\nversion: "0.1.0-beta.1"\n',
+                "0.1.0-beta.2",
+            )
 
     def test_changelog_entry_is_prepended_under_the_header(self) -> None:
         text = "# Changelog\n\n## 0.1.0-beta.1\n\n- Old entry.\n"

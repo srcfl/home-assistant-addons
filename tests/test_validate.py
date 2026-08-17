@@ -12,6 +12,60 @@ PRIOR_DIGEST = "sha256:" + "c" * 64
 SOURCE_COMMIT = "e" * 40
 
 
+class CoreImageVersionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dockerfile = (validate.ROOT / "ftw/Dockerfile").read_text(encoding="utf-8")
+
+    def test_beta_and_stable_core_versions_use_the_image_tag_contract(self) -> None:
+        validate.validate_core_image_tag_contract(self.dockerfile)
+        for version in ("v1.16.1-beta.20", "v1.16.1"):
+            with self.subTest(version=version):
+                compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
+                compat["core"]["version"] = version
+                validate.require_release_values(compat, require_app_digest=False)
+                rendered = self.dockerfile.replace("${CORE_VERSION}", version)
+                self.assertIn(f"FTW_IMAGE_TAG={version}", rendered)
+
+    def test_add_on_version_cannot_replace_core_version(self) -> None:
+        dockerfile = self.dockerfile.replace(
+            "FTW_IMAGE_TAG=${CORE_VERSION}",
+            "FTW_IMAGE_TAG=${BUILD_VERSION}",
+        )
+        with self.assertRaisesRegex(validate.ValidationError, "must set FTW_IMAGE_TAG from CORE_VERSION"):
+            validate.validate_core_image_tag_contract(dockerfile)
+
+
+class BundleVersionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = validate.load_yaml(validate.ROOT / "ftw/config.yaml")
+        self.compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
+
+    def test_beta_config_supplies_its_exact_runtime_version(self) -> None:
+        validate.validate_common(self.config, self.compat)
+        self.assertEqual(
+            self.config["environment"]["FTW_BUNDLE_VERSION"],
+            self.config["version"],
+        )
+
+    def test_stable_promotion_supplies_stable_runtime_version(self) -> None:
+        stable = str(self.config["version"]).split("-beta.", 1)[0]
+        config = copy.deepcopy(self.config)
+        compat = copy.deepcopy(self.compat)
+        config["version"] = stable
+        config["environment"]["FTW_BUNDLE_VERSION"] = stable
+        compat["add_on"]["version"] = stable
+        validate.validate_common(config, compat)
+
+    def test_stable_promotion_rejects_the_baked_beta_fallback(self) -> None:
+        stable = str(self.config["version"]).split("-beta.", 1)[0]
+        config = copy.deepcopy(self.config)
+        compat = copy.deepcopy(self.compat)
+        config["version"] = stable
+        compat["add_on"]["version"] = stable
+        with self.assertRaisesRegex(validate.ValidationError, "FTW_BUNDLE_VERSION"):
+            validate.validate_common(config, compat)
+
+
 class PilotRecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")

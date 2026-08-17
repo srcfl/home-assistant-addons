@@ -16,6 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLACEHOLDER = re.compile(r"^__[A-Z0-9_]+__$")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 BETA_SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$")
+CORE_SEMVER = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-beta\.[0-9]+)?$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -53,6 +54,17 @@ def is_placeholder(value: object) -> bool:
     return isinstance(value, str) and bool(PLACEHOLDER.fullmatch(value))
 
 
+def validate_core_image_tag_contract(dockerfile: str) -> None:
+    argument = re.search(r"(?m)^ARG CORE_VERSION[ \t]*$", dockerfile)
+    image_tag = re.search(
+        r"(?m)^[ \t]+FTW_IMAGE_TAG=\$\{CORE_VERSION\}(?:[ \t]+\\)?[ \t]*$",
+        dockerfile,
+    )
+    require(argument is not None, "Dockerfile must declare the CORE_VERSION build argument")
+    require(image_tag is not None, "Dockerfile must set FTW_IMAGE_TAG from CORE_VERSION")
+    require(argument.start() < image_tag.start(), "Dockerfile must declare CORE_VERSION before FTW_IMAGE_TAG")
+
+
 def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
     repository = load_yaml(ROOT / "repository.yaml")
     require(repository.get("name"), "repository.yaml needs name")
@@ -74,6 +86,10 @@ def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
         environment.get("FTW_OPTIMIZER_SOCKET") == "/run/ftw-optimizer/optimizer.sock",
         "optimizer socket is wrong",
     )
+    require(
+        environment.get("FTW_BUNDLE_VERSION") == config.get("version"),
+        "FTW_BUNDLE_VERSION must match the add-on version",
+    )
 
     require(compat.get("schema_version") == 1, "compatibility schema_version must be 1")
     app = compat.get("add_on")
@@ -88,6 +104,7 @@ def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
     require(isinstance(core, dict), "compatibility core must be an object")
     require(core.get("mode") == "home_assistant_add_on", "Core must use add-on mode")
     require(core.get("self_update") is False, "Core self-update must be false")
+    validate_core_image_tag_contract((ROOT / "ftw" / "Dockerfile").read_text(encoding="utf-8"))
 
     optimizer = compat.get("optimizer")
     require(isinstance(optimizer, dict), "compatibility optimizer must be an object")
@@ -130,6 +147,10 @@ def require_release_values(compat: dict[str, Any], *, require_app_digest: bool) 
     }
     for name, value in values.items():
         require(not is_placeholder(value) and value not in (None, ""), f"{name} is still a placeholder")
+    require(
+        CORE_SEMVER.fullmatch(str(core["version"])) is not None,
+        "Core version must match vX.Y.Z or vX.Y.Z-beta.N",
+    )
     if require_app_digest:
         require(not is_placeholder(app.get("manifest_digest")), "add-on manifest digest is still a placeholder")
         require(DIGEST.fullmatch(str(app["manifest_digest"])) is not None, "add-on manifest digest is invalid")

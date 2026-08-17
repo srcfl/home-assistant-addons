@@ -8,6 +8,12 @@
 - Identify the image to FTW as the Home Assistant bundle (`FTW_BUNDLE`,
   `FTW_BUNDLE_VERSION`), so the FTW web UI can show the single bundled FTW
   version instead of a per-container Core/Optimizer breakdown.
+- Pass the pinned Core release tag as `FTW_IMAGE_TAG`, so Core reports the
+  exact upstream image version for both beta and stable pins.
+- Accept Core's base-version OCI label while still binding the exact release
+  tag, image digest, and source revision.
+- Let Supervisor supply the installed add-on version, so stable promotion
+  replaces the image's beta fallback without rebuilding it.
 
 ## 0.0.0-dev
 

@@ -175,6 +175,18 @@ def image_labels(image: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in labels.items()}
 
 
+def allowed_oci_version_labels(image: str, release_version: str) -> set[str]:
+    if image != CORE_IMAGE:
+        return {release_version}
+    match = UPSTREAM_VERSION.fullmatch(release_version)
+    require(match is not None, f"Core release version is invalid: {release_version}")
+    major, minor, patch, beta = match.groups()
+    package_version = f"{major}.{minor}.{patch}"
+    if beta is None:
+        return {package_version}
+    return {release_version, package_version}
+
+
 def optional_image_digest(reference: str) -> str | None:
     result = run(["docker", "buildx", "imagetools", "inspect", reference, "--format", "{{.Manifest.Digest}}"])
     if result.returncode == 0:
@@ -229,7 +241,7 @@ def inspect_release_image(image: str, version: str, expected_commit: str) -> str
         require(isinstance(child, dict), f"{image} linux/{architecture} config is invalid")
         labels = image_labels(child)
         require(
-            labels.get("org.opencontainers.image.version") == version,
+            labels.get("org.opencontainers.image.version") in allowed_oci_version_labels(image, version),
             f"{image} linux/{architecture} version label does not match release {version}",
         )
         require(
@@ -359,6 +371,12 @@ def render_pilot_record(compat: dict[str, Any], version: str, update_from: str |
 def replace_config_version(text: str, version: str) -> str:
     new_text, count = re.subn(r'(?m)^version: "[^"]*"$', f'version: "{version}"', text)
     require(count == 1, "ftw/config.yaml version line was not found")
+    new_text, count = re.subn(
+        r'(?m)^  FTW_BUNDLE_VERSION: "[^"]*"$',
+        f'  FTW_BUNDLE_VERSION: "{version}"',
+        new_text,
+    )
+    require(count == 1, "ftw/config.yaml FTW_BUNDLE_VERSION line was not found")
     return new_text
 
 

@@ -4,6 +4,8 @@ set -Eeuo pipefail
 image=${1:?usage: smoke.sh IMAGE}
 name="ftw-ha-smoke-${RANDOM}"
 volume="ftw-ha-data-${RANDOM}"
+expected_core_version="$(docker image inspect --format '{{ index .Config.Labels "com.sourceful.ftw.core.version" }}' "${image}")"
+[[ -n "${expected_core_version}" && "${expected_core_version}" != "<no value>" ]]
 
 cleanup() {
   docker rm -f "${name}" >/dev/null 2>&1 || true
@@ -35,6 +37,7 @@ done
 
 wait_for_optimizer
 docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_OPTIMIZER_TRANSPORT" = unix'
+docker exec "${name}" bash -ceu 'test "$FTW_IMAGE_TAG" = "$1"' -- "${expected_core_version}"
 docker exec "${name}" bash -ceu 'install -d -o 100 -g 101 /data/drivers; printf "%s\n" "-- user marker" >/data/drivers/custom.lua; : >/data/config.yaml; chown 100:101 /data/config.yaml /data/drivers/custom.lua'
 docker exec "${name}" /usr/local/bin/healthcheck.py
 

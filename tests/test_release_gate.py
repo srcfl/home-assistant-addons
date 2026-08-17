@@ -138,12 +138,18 @@ class ImageEvidenceTests(unittest.TestCase):
             "arm64": fixture("image-arm64.json"),
         }
 
-    def validate(self) -> None:
+    def validate(
+        self,
+        *,
+        expected_version: str = "v1.2.3-beta.1",
+        image_repository: str = release_gate.CORE_IMAGE,
+    ) -> None:
         release_gate.validate_image_platforms(
             name="Fixture",
+            image_repository=image_repository,
             index=self.index,
             platform_images=self.images,
-            expected_version="v1.2.3-beta.1",
+            expected_version=expected_version,
             expected_commit="c" * 40,
         )
 
@@ -164,6 +170,73 @@ class ImageEvidenceTests(unittest.TestCase):
         self.images["amd64"]["config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
         with self.assertRaisesRegex(release_gate.GateError, "revision label"):
             self.validate()
+
+    def test_legacy_and_current_core_labels_accept_beta_and_stable(self) -> None:
+        cases = (
+            ("v1.16.1-beta.20", "v1.16.1-beta.20"),
+            ("v1.15.0", "1.15.0"),
+            ("v2.0.0-beta.3", "2.0.0"),
+            ("v2.0.0", "2.0.0"),
+        )
+        for version, label in cases:
+            with self.subTest(version=version, label=label):
+                for image in self.images.values():
+                    image["config"]["Labels"]["org.opencontainers.image.version"] = label
+                self.validate(expected_version=version)
+
+    def test_wrong_core_base_or_candidate_label_fails(self) -> None:
+        for label in ("2.0.1", "v2.0.0", "1.16.1-beta.21", "v2.0.0-beta.2", None):
+            with self.subTest(label=label):
+                for image in self.images.values():
+                    labels = image["config"]["Labels"]
+                    if label is None:
+                        labels.pop("org.opencontainers.image.version", None)
+                    else:
+                        labels["org.opencontainers.image.version"] = label
+                with self.assertRaisesRegex(release_gate.GateError, "version label"):
+                    self.validate(expected_version="v2.0.0-beta.3")
+
+    def test_stable_rejects_prefixed_or_candidate_labels(self) -> None:
+        for label in ("v2.0.0", "v2.0.0-beta.3", "2.0.0-beta.3"):
+            with self.subTest(label=label):
+                for image in self.images.values():
+                    image["config"]["Labels"]["org.opencontainers.image.version"] = label
+                with self.assertRaisesRegex(release_gate.GateError, "version label"):
+                    self.validate(expected_version="v2.0.0")
+
+    def test_optimizer_does_not_accept_the_core_base_label_contract(self) -> None:
+        for image in self.images.values():
+            image["config"]["Labels"]["org.opencontainers.image.version"] = "1.2.3"
+        with self.assertRaisesRegex(release_gate.GateError, "version label"):
+            self.validate(
+                expected_version="v1.2.3",
+                image_repository="ghcr.io/srcfl/ftw-optimizer",
+            )
+
+
+class PinnedVersionTagTests(unittest.TestCase):
+    def test_exact_beta_and_stable_tags_bind_the_expected_digest(self) -> None:
+        for version in ("v2.0.0-beta.3", "v2.0.0"):
+            with self.subTest(version=version):
+                with mock.patch.object(release_gate, "optional_image_digest", return_value=DIGEST) as inspect:
+                    release_gate.validate_pinned_version_tag("Core", release_gate.CORE_IMAGE, version, DIGEST)
+                inspect.assert_called_once_with(f"{release_gate.CORE_IMAGE}:{version}")
+
+    def test_legacy_tag_without_v_is_supported(self) -> None:
+        with mock.patch.object(release_gate, "optional_image_digest", side_effect=(None, DIGEST)) as inspect:
+            release_gate.validate_pinned_version_tag("Core", release_gate.CORE_IMAGE, "v1.16.1", DIGEST)
+        self.assertEqual(
+            inspect.call_args_list,
+            [mock.call(f"{release_gate.CORE_IMAGE}:v1.16.1"), mock.call(f"{release_gate.CORE_IMAGE}:1.16.1")],
+        )
+
+    def test_wrong_or_missing_tag_digest_fails(self) -> None:
+        with mock.patch.object(release_gate, "optional_image_digest", return_value="sha256:" + "a" * 64):
+            with self.assertRaisesRegex(release_gate.GateError, "wrong digest"):
+                release_gate.validate_pinned_version_tag("Core", release_gate.CORE_IMAGE, "v2.0.0", DIGEST)
+        with mock.patch.object(release_gate, "optional_image_digest", return_value=None):
+            with self.assertRaisesRegex(release_gate.GateError, "is missing"):
+                release_gate.validate_pinned_version_tag("Core", release_gate.CORE_IMAGE, "v2.0.0", DIGEST)
 
 
 class ResumeRunTests(unittest.TestCase):

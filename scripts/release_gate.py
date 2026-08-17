@@ -23,6 +23,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+CORE_IMAGE = "ghcr.io/srcfl/ftw"
+CORE_VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ABSENT_IMAGE_MARKERS = ("manifest unknown", "name unknown", "not found")
@@ -228,6 +230,16 @@ def optional_image_digest(reference: str) -> str | None:
     raise GateError(f"could not check image tag {reference}: {(result.stderr or result.stdout).strip()}")
 
 
+def validate_pinned_version_tag(name: str, image: str, version: str, expected_digest: str) -> None:
+    actual_digest = None
+    for tag in dict.fromkeys((version, version.removeprefix("v"))):
+        actual_digest = optional_image_digest(f"{image}:{tag}")
+        if actual_digest is not None:
+            break
+    require(actual_digest is not None, f"{name} image tag for {version} is missing")
+    require(actual_digest == expected_digest, f"{name} image tag for {version} has the wrong digest")
+
+
 def beta_target_state(repository: str, image: str, version: str) -> None:
     tag = f"ftw-v{version}"
     git_result = run(["git", "ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{tag}"])
@@ -280,9 +292,22 @@ def image_labels(image: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in labels.items()}
 
 
+def allowed_oci_version_labels(image: str, release_version: str) -> set[str]:
+    if image != CORE_IMAGE:
+        return {release_version}
+    match = CORE_VERSION.fullmatch(release_version)
+    require(match is not None, f"Core release version is invalid: {release_version}")
+    major, minor, patch, beta = match.groups()
+    package_version = f"{major}.{minor}.{patch}"
+    if beta is None:
+        return {package_version}
+    return {release_version, package_version}
+
+
 def validate_image_platforms(
     *,
     name: str,
+    image_repository: str,
     index: dict[str, Any],
     platform_images: dict[str, dict[str, Any]],
     expected_version: str,
@@ -305,11 +330,12 @@ def validate_image_platforms(
 
     for architecture in required_architectures:
         require(architecture in found, f"{name} image lacks linux/{architecture}")
-        image = platform_images.get(architecture)
-        require(isinstance(image, dict), f"{name} linux/{architecture} config is missing")
-        labels = image_labels(image)
+        platform_image = platform_images.get(architecture)
+        require(isinstance(platform_image, dict), f"{name} linux/{architecture} config is missing")
+        labels = image_labels(platform_image)
         require(
-            labels.get("org.opencontainers.image.version") == expected_version,
+            labels.get("org.opencontainers.image.version")
+            in allowed_oci_version_labels(image_repository, expected_version),
             f"{name} linux/{architecture} OCI version label does not match compatibility.yaml",
         )
         require(
@@ -321,6 +347,7 @@ def validate_image_platforms(
 def inspect_pinned_image(name: str, image: str, digest: str, version: str, commit: str) -> None:
     require(DIGEST.fullmatch(digest) is not None, f"{name} digest is invalid")
     require(COMMIT.fullmatch(commit) is not None, f"{name} commit is invalid")
+    validate_pinned_version_tag(name, image, version, digest)
     reference = f"{image}@{digest}"
     actual = command_output(
         ["docker", "buildx", "imagetools", "inspect", reference, "--format", "{{.Manifest.Digest}}"]
@@ -362,6 +389,7 @@ def inspect_pinned_image(name: str, image: str, digest: str, version: str, commi
 
     validate_image_platforms(
         name=name,
+        image_repository=image,
         index=index,
         platform_images=platform_images,
         expected_version=version,

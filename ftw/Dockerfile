@@ -59,7 +59,8 @@ ENV HOME=/data \
     FTW_OPTIMIZER_TRANSPORT=unix \
     FTW_OPTIMIZER_SOCKET=/run/ftw-optimizer/optimizer.sock \
     FTW_BUNDLE=home_assistant_addon \
-    FTW_BUNDLE_VERSION=${BUILD_VERSION}
+    FTW_BUNDLE_VERSION=${BUILD_VERSION} \
+    FTW_IMAGE_TAG=${CORE_VERSION}
 
 LABEL io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}" \

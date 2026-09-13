@@ -50,11 +50,18 @@ wait_healthy() {
   fail "${name} did not become healthy in 60s"
 }
 
+# Find Core by an argument equal to /app/ftw. That holds for the real binary
+# and for the fixture, whose shebang makes the process name python3 instead.
 core_pid() {
   docker exec "${name}" bash -ceu '
-    for status in /proc/[0-9]*/status; do
-      if grep -q "^Name:	ftw$" "${status}" 2>/dev/null; then
-        basename "$(dirname "${status}")"
+    for cmdline in /proc/[0-9]*/cmdline; do
+      pid="${cmdline#/proc/}"
+      pid="${pid%/cmdline}"
+      if [[ "${pid}" == "$$" ]]; then
+        continue
+      fi
+      if tr "\0" "\n" <"${cmdline}" 2>/dev/null | grep -qx "/app/ftw"; then
+        printf "%s\n" "${pid}"
         exit 0
       fi
     done
@@ -97,7 +104,7 @@ fi
 # Core dying must end the container so Supervisor restarts it.
 pid="$(core_pid)"
 log "killing Core pid ${pid}; the container must exit"
-docker exec "${name}" kill -KILL "${pid}"
+docker exec "${name}" bash -ceu 'kill -KILL "$1"' -- "${pid}"
 for _ in {1..30}; do
   if [[ "$(docker inspect --format '{{.State.Running}}' "${name}")" == false ]]; then
     break

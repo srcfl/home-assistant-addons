@@ -3,50 +3,42 @@
 This is the official Home Assistant app repository for
 [FTW](https://github.com/srcfl/ftw).
 
-The repository is public, but it is not ready for normal use. A registry image
-from an incomplete workflow is not a release. Install only a version that has a
-matching GitHub release, signed image, SBOM, and attestation. Stable stays
-blocked until the same beta image passes a Home Assistant OS and Supervisor test
-for install, boot, data retention, update, rollback, and fallback.
+| App | Slug | Follows | Version |
+|---|---|---|---|
+| **FTW (beta)** | `ftw-beta` | every FTW beta `vX.Y.Z-beta.N` | `X.Y.Z-beta.N` |
+| **FTW** | `ftw` | every FTW stable `vX.Y.Z` | `X.Y.Z` |
+
+Both apps install `ghcr.io/srcfl/home-assistant-addons/ftw:<version>`: the
+pinned FTW Core image plus a small Supervisor wrapper. Core bundles the
+Energyplan worker and its Go planner fallback, so the app has one process and
+no separate optimizer. A stable version is the beta image FTW promoted,
+re-tagged and never rebuilt. FTW's updater is not present; Home Assistant
+Supervisor owns update and rollback.
 
 ## Install
 
-Do not install a version that lacks a GitHub release and signed image. When the
-first beta is published:
-
 1. In Home Assistant, open **Settings → Apps → App store → Repositories**.
 2. Add `https://github.com/srcfl/home-assistant-addons`.
-3. Install **FTW**.
+3. Install **FTW (beta)** to follow betas, or **FTW** for stable once it is
+   published.
 
-The app supports `amd64` and `aarch64`. Home Assistant Supervisor downloads a
-pre-built image; it does not build FTW on your host.
+The apps support `amd64` and `aarch64`. Supervisor downloads a pre-built,
+signed image; it does not build FTW on your host. Install only a version that
+has a matching GitHub release in this repository; an image left in the
+registry by a failed workflow is not a release.
 
-See [FTW app docs](ftw/DOCS.md), [compatibility](COMPATIBILITY.md), and
-[support routes](SUPPORT.md).
+See the [app guide](ftw/DOCS.md), [compatibility](COMPATIBILITY.md),
+[releasing](RELEASING.md) and [support routes](SUPPORT.md).
 
 ## Release rules
 
-FTW app versions are independent from FTW Core and FTW Optimizer versions.
-Each release records both upstream versions, their image digests, protocol
-features, and test evidence in `compatibility.yaml`.
+Releases follow FTW automatically: the sync workflow pins each new FTW beta
+into `ftw-beta` and, once a Home Assistant OS and Supervisor pilot is recorded,
+promotes the matching beta into `ftw` when FTW promotes. Every pin is verified
+against FTW's release receipt and the registry before anything is built.
 
-Beta images use the `beta` channel tag. Stable promotion adds a `stable` tag to
-the exact tested beta manifest digest. Stable promotion never rebuilds the
-image. FTW's updater is not present; Home Assistant Supervisor owns update and
-rollback.
-
-If publication stops after it writes the immutable image, the normal beta
-workflow cannot run again for that version. The separate finalize workflow may
-complete it only when the failed run, source commit, image digests, signatures,
-SBOMs, upstream images, and driver baseline still match. It never builds or
-rewrites an image tag. A failed finalize publishes no supported release, but
-`gh release create` may leave a hidden draft if an asset upload or network step
-fails. The next target check stops when that draft exists. Finalize must not
-retry automatically, delete the draft or tag, overwrite assets, or reuse the
-candidate. Treat the candidate as an orphan until a separate review approves a
-recovery; otherwise use a new beta version. The release manifest keeps the
-original image source commit; the OCI attestation also records the reviewed
-finalize workflow commit.
+Stable stays blocked until the pilot in [pilot/README.md](pilot/README.md) is
+recorded in `compatibility.yaml`.
 
 ## Credit
 

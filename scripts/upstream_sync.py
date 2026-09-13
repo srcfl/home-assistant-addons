@@ -1,62 +1,59 @@
 #!/usr/bin/env python3
-"""Sync the add-on pins to the latest upstream FTW Core and Optimizer releases.
+"""Sync the app pins to the newest upstream FTW release of each channel.
 
-The sync only moves forward: it selects the highest published upstream
-release, resolves the multi-arch image digest and source commit from the
-registry, and rewrites the pins so that the existing fail-closed release
-gates accept them. It never downgrades and it skips releases whose images
-are not fully published yet.
+Beta: the newest FTW prerelease becomes the `ftw-beta` app version, built from
+the exact Core image digest FTW recorded in that release's
+`ftw-image-digests.json` receipt.
+
+Stable: the newest FTW stable release becomes the `ftw` app version by
+promoting the app beta that was built from the same Core digest, which FTW
+names in the release's `ftw-promotion-receipt.json`. Stable is left alone until
+compatibility.yaml records a passed Home Assistant OS and Supervisor pilot.
+
+Every pin is checked against the registry (a multi-arch index whose platform
+images carry the expected revision and version labels) and against FTW's
+receipt. The script never downgrades a channel, never builds or pushes an
+image, and leaves publication to the release workflows.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
-from typing import Any, Callable
+import tempfile
+from typing import Any
 
 import yaml
+
+try:
+    from scripts import release_gate
+except ImportError:  # `python scripts/upstream_sync.py` puts scripts/ first on sys.path.
+    import release_gate  # type: ignore[no-redef]
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UPSTREAM_REPOSITORY = "srcfl/ftw"
 CORE_IMAGE = "ghcr.io/srcfl/ftw"
-OPTIMIZER_IMAGE = "ghcr.io/srcfl/ftw-optimizer"
-PUBLISHER_MARKER = "__PUBLISHED_BY_BETA_WORKFLOW__"
-CORE_TAG = re.compile(r"^v\d+\.\d+\.\d+(?:-beta\.\d+)?$")
-OPTIMIZER_TAG = re.compile(r"^optimizer-v\d+\.\d+\.\d+(?:-beta\.\d+)?$")
+BETA_TAG = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
+STABLE_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 UPSTREAM_VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
-ADD_ON_BETA = re.compile(r"^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$")
-ADD_ON_STABLE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
-LIVE_PILOT_URL = re.compile(
-    r"^https://github\.com/srcfl/ftw/"
-    r"(?:(?:pull|issues)/\d+#issuecomment-\d+|actions/runs/\d+(?:[/?#][^\s]*)?)$"
-)
 ABSENT_IMAGE_MARKERS = ("manifest unknown", "name unknown", "not found")
-MAX_VERSION_PROBES = 200
-PILOT_EXPECTED = {
-    "install": "Supervisor pulls the signed pre-built image for the host architecture.",
-    "boot_readiness": "Setup opens, then health reports valid Core status after state migration.",
-    "persistence": (
-        "Config, state, history, user drivers, and managed drivers survive app and host restarts."
-    ),
-    "optimizer_fallback": "Socket, handshake, and solve failures keep Core ready on the Go planner.",
-    "optimizer_recovery": (
-        "The Unix worker reconnects after capped retry without a container restart or hidden Python worker."
-    ),
-    "update": "Supervisor updates from the exact prior signed beta with no FTW updater or Docker socket.",
-    "rollback": (
-        "Supervisor rolls back the image, then the operator restores the matching HA backup and data state."
-    ),
-    "artifact_match": "The pulled multi-architecture digest matches the signed beta release record.",
-    "active_solver": "Unix handshake and solve use protocol 1, plan schema 1, and all requested features.",
+RECEIPTS = {"beta": "ftw-image-digests.json", "stable": "ftw-promotion-receipt.json"}
+ADD_ON_DIRECTORIES = {"beta": "ftw-beta", "stable": "ftw"}
+STABLE_CONFIG_LINES = {
+    "name": "name: FTW",
+    "description": "description: Local-first home energy control from Sourceful",
+    "slug": "slug: ftw",
+    "url": "url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw",
 }
 
 
@@ -64,8 +61,8 @@ class SyncError(Exception):
     pass
 
 
-class ImageNotReady(Exception):
-    """The release exists but its multi-arch image is not fully published yet."""
+class ImageNotReady(SyncError):
+    pass
 
 
 def require(condition: bool, message: str) -> None:
@@ -74,7 +71,7 @@ def require(condition: bool, message: str) -> None:
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, check=False, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
 def command_output(command: list[str]) -> str:
@@ -109,20 +106,23 @@ def version_key(version: str) -> tuple[int, int, int, int, int] | None:
     return (int(major), int(minor), int(patch), 0, int(beta))
 
 
-def release_version(tag: str) -> str:
-    return tag.removeprefix("optimizer-")
+def add_on_version(core_version: str) -> str:
+    require(UPSTREAM_VERSION.fullmatch(core_version) is not None, f"upstream version is invalid: {core_version}")
+    return core_version[1:]
 
 
-def select_latest_release(releases: list[Any], tag_pattern: re.Pattern[str]) -> dict[str, Any] | None:
+def select_latest_release(releases: list[Any], channel: str) -> dict[str, Any] | None:
+    pattern = BETA_TAG if channel == "beta" else STABLE_TAG
+    prerelease = channel == "beta"
     best: dict[str, Any] | None = None
-    best_key: tuple[int, int, int, int, int] | None = None
+    best_key: tuple[int, ...] | None = None
     for release in releases:
         if not isinstance(release, dict) or release.get("draft"):
             continue
         tag = str(release.get("tag_name", ""))
-        if tag_pattern.fullmatch(tag) is None:
+        if pattern.fullmatch(tag) is None or bool(release.get("prerelease")) != prerelease:
             continue
-        key = version_key(release_version(tag))
+        key = version_key(tag)
         if key is None:
             continue
         if best_key is None or key > best_key:
@@ -130,41 +130,34 @@ def select_latest_release(releases: list[Any], tag_pattern: re.Pattern[str]) -> 
     return best
 
 
-def next_add_on_version(current: str, tag_exists: Callable[[str], bool]) -> str:
-    beta = ADD_ON_BETA.fullmatch(current)
-    if beta is not None:
-        major, minor, patch = beta.group(1), beta.group(2), beta.group(3)
-        number = int(beta.group(4)) + 1
+def download_release_asset(repository: str, tag: str, name: str) -> bytes:
+    with tempfile.TemporaryDirectory() as directory:
+        result = run(["gh", "release", "download", tag, "--repo", repository, "--pattern", name, "--dir", directory])
+        path = pathlib.Path(directory) / name
+        if result.returncode != 0 or not path.is_file():
+            raise ImageNotReady(f"{repository} release {tag} has no {name} asset yet")
+        return path.read_bytes()
+
+
+def parse_receipt(raw: bytes, *, channel: str, tag: str, commit: str) -> dict[str, str]:
+    try:
+        receipt = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SyncError(f"{tag} receipt is not valid JSON: {error}") from error
+    require(isinstance(receipt, dict) and receipt.get("schema") == 1, f"{tag} receipt schema is not 1")
+    if channel == "beta":
+        require(receipt.get("tag") == tag, f"{tag} receipt names a different tag")
+        source_beta = tag
     else:
-        stable = ADD_ON_STABLE.fullmatch(current)
-        require(stable is not None, f"current add-on version is invalid: {current}")
-        major, minor = stable.group(1), stable.group(2)
-        patch = str(int(stable.group(3)) + 1)
-        number = 1
-    for _ in range(MAX_VERSION_PROBES):
-        candidate = f"{major}.{minor}.{patch}-beta.{number}"
-        if not tag_exists(f"ftw-v{candidate}"):
-            return candidate
-        number += 1
-    raise SyncError("could not find a free add-on beta version")
-
-
-def strip_url(url: str) -> str:
-    return url.rstrip(".,;:!?'\"")
-
-
-def extract_live_pilot_evidence(body: str | None) -> str | None:
-    text = body or ""
-    labeled = re.search(
-        r"live[\s_-]?pilot[^\n]*?(https://github\.com/srcfl/ftw/[^\s<>()\[\]]+)",
-        text,
-        re.IGNORECASE,
-    )
-    if labeled is not None:
-        url = strip_url(labeled.group(1))
-        if LIVE_PILOT_URL.fullmatch(url) is not None:
-            return url
-    return None
+        require(receipt.get("stable_tag") == tag, f"{tag} receipt names a different stable tag")
+        source_beta = str(receipt.get("source_beta", ""))
+        require(BETA_TAG.fullmatch(source_beta) is not None, f"{tag} receipt names an invalid source beta")
+    require(receipt.get("commit") == commit, f"{tag} receipt commit differs from the tag")
+    images = receipt.get("images")
+    core = images.get("core") if isinstance(images, dict) else None
+    digest = str(core.get("digest", "")) if isinstance(core, dict) else ""
+    require(DIGEST.fullmatch(digest) is not None, f"{tag} receipt lacks a Core digest")
+    return {"digest": digest, "source_beta": source_beta}
 
 
 def image_labels(image: dict[str, Any]) -> dict[str, str]:
@@ -200,7 +193,7 @@ def optional_image_digest(reference: str) -> str | None:
 
 
 def inspect_release_image(image: str, version: str, expected_commit: str) -> str:
-    """Resolve the release digest and require the labels the release gate will re-check."""
+    """Resolve the release digest and require the labels the release gate re-checks."""
     digest = None
     for tag in dict.fromkeys((version, version.removeprefix("v"))):
         digest = optional_image_digest(f"{image}:{tag}")
@@ -209,7 +202,7 @@ def inspect_release_image(image: str, version: str, expected_commit: str) -> str
     if digest is None:
         raise ImageNotReady(f"{image} has no published image for {version} yet")
     index = json.loads(command_output(["docker", "buildx", "imagetools", "inspect", f"{image}@{digest}", "--raw"]))
-    require(isinstance(index, dict), f"{image} registry index is invalid")
+    require(isinstance(index, dict), f"{image} pin must resolve to a multi-arch index")
     manifests = index.get("manifests")
     require(isinstance(manifests, list), f"{image} pin must resolve to a multi-arch index")
     for architecture in ("amd64", "arm64"):
@@ -242,279 +235,228 @@ def inspect_release_image(image: str, version: str, expected_commit: str) -> str
         labels = image_labels(child)
         require(
             labels.get("org.opencontainers.image.version") in allowed_oci_version_labels(image, version),
-            f"{image} linux/{architecture} version label does not match release {version}",
+            f"{image} linux/{architecture} OCI version label does not match {version}",
         )
         require(
             labels.get("org.opencontainers.image.revision") == expected_commit,
-            f"{image} linux/{architecture} revision label does not match the release commit",
+            f"{image} linux/{architecture} OCI revision label does not match {expected_commit}",
         )
     return digest
 
 
-def discover_build_run(repository: str, commit: str) -> str | None:
-    try:
-        record = gh_api(f"repos/{repository}/actions/runs?head_sha={commit}&status=success&per_page=100")
-    except SyncError:
-        return None
-    runs = record.get("workflow_runs") if isinstance(record, dict) else None
-    if not isinstance(runs, list):
-        return None
-    fallback = None
-    for entry in runs:
-        if not isinstance(entry, dict):
-            continue
-        url = entry.get("html_url")
-        if not isinstance(url, str):
-            continue
-        label = f"{entry.get('name', '')} {entry.get('path', '')}".lower()
-        if "build" in label or "release" in label:
-            return url
-        fallback = fallback or url
-    return fallback
-
-
-def resolve_pin(
+def resolve_core_pin(
     *,
     upstream: str,
     release: dict[str, Any],
-    image: str,
+    channel: str,
     current_version: str,
 ) -> dict[str, Any] | None:
     tag = str(release.get("tag_name", ""))
-    version = release_version(tag)
-    if version == current_version:
+    if tag == current_version:
         return None
-    current_key = version_key(current_version)
-    new_key = version_key(version)
-    if current_key is not None and new_key is not None and new_key <= current_key:
+    new_key = version_key(tag)
+    require(new_key is not None, f"upstream release tag is invalid: {tag}")
+    current_key = version_key(current_version) if current_version else None
+    if current_key is not None and new_key <= current_key:
         return None
     commit = str(gh_api(f"repos/{upstream}/commits/{tag}").get("sha", ""))
     require(COMMIT.fullmatch(commit) is not None, f"could not resolve the commit for {tag}")
-    digest = inspect_release_image(image, version, commit)
+    receipt = parse_receipt(
+        download_release_asset(upstream, tag, RECEIPTS[channel]),
+        channel=channel,
+        tag=tag,
+        commit=commit,
+    )
+    digest = inspect_release_image(CORE_IMAGE, tag, commit)
+    require(
+        digest == receipt["digest"],
+        f"{CORE_IMAGE}:{tag} resolves to {digest}, but FTW's release receipt records {receipt['digest']}",
+    )
     return {
-        "version": version,
-        "digest": digest,
+        "version": tag,
         "commit": commit,
+        "digest": digest,
         "release_url": str(release.get("html_url", "")),
-        "build_url": discover_build_run(upstream, commit),
-        "body": str(release.get("body") or ""),
+        "source_beta": receipt["source_beta"],
     }
 
 
-def render_pilot_record(compat: dict[str, Any], version: str, update_from: str | None) -> dict[str, Any]:
-    core = compat["core"]
-    optimizer = compat["optimizer"]
-    drivers = compat["drivers"]
-    baseline = drivers["tested_baseline"]
-    checks: dict[str, Any] = {}
-    for name in ("install", "boot_readiness", "persistence", "optimizer_fallback", "optimizer_recovery"):
-        checks[name] = {"status": "blocked", "expected": PILOT_EXPECTED[name], "evidence": None}
-    checks["update"] = {
-        "status": "blocked",
-        "from_version": update_from,
-        "from_manifest_digest": None,
-        "to_version": version,
-        "to_manifest_digest": None,
-        "expected": PILOT_EXPECTED["update"],
-        "evidence": None,
-    }
-    checks["rollback"] = {
-        "status": "blocked",
-        "from_version": version,
-        "from_manifest_digest": None,
-        "to_version": update_from,
-        "to_manifest_digest": None,
-        "backup_reference": None,
-        "expected": PILOT_EXPECTED["rollback"],
-        "evidence": None,
-    }
-    for name in ("artifact_match", "active_solver"):
-        checks[name] = {"status": "blocked", "expected": PILOT_EXPECTED[name], "evidence": None}
+def current_driver_baseline(drivers: dict[str, Any]) -> dict[str, Any]:
+    """Record the signed stable driver manifest as it is at pin time."""
+    key_id = str(drivers.get("tested_baseline", {}).get("key_id", release_gate.DRIVER_KEY_ID))
+    raw = release_gate.download_driver_manifest(str(drivers.get("manifest", "")))
+    try:
+        envelope = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SyncError(f"driver manifest is not valid JSON: {error}") from error
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    commit = str(payload.get("commit", "")) if isinstance(payload, dict) else ""
+    require(COMMIT.fullmatch(commit) is not None, "driver manifest payload lacks a source commit")
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        release_gate.validate_signed_driver_manifest(
+            raw,
+            expected_sha256=digest,
+            expected_commit=commit,
+            expected_key_id=key_id,
+        )
+    except release_gate.GateError as error:
+        raise SyncError(f"driver manifest verification failed: {error}") from error
     return {
-        "schema_version": 1,
-        "add_on_version": version,
-        "status": "blocked",
-        "candidate": {
-            "source_commit": None,
-            "manifest_digest": None,
-            "core": {
-                "version": core["version"],
-                "commit": core["commit"],
-                "digest": core["digest"],
-            },
-            "optimizer": {
-                "version": optimizer["version"],
-                "commit": optimizer["commit"],
-                "digest": optimizer["digest"],
-            },
-            "drivers": {
-                "channel": drivers["channel"],
-                "tested_commit": baseline["commit"],
-                "manifest_sha256": baseline["manifest_sha256"],
-                "key_id": baseline["key_id"],
-            },
+        "commit": commit,
+        "manifest_sha256": digest,
+        "key_id": key_id,
+        "evidence": {
+            "commit": f"https://github.com/srcfl/device-drivers/commit/{commit}",
+            "release": "https://github.com/srcfl/device-drivers/releases/tag/drivers-stable",
         },
-        "environment": {
-            "host_architecture": None,
-            "hardware": None,
-            "home_assistant_os_version": None,
-            "supervisor_version": None,
-            "operator": None,
-            "started_at": None,
-            "completed_at": None,
-        },
-        "checks": checks,
-        "notes": "Automated upstream sync. All Home Assistant OS and Supervisor checks remain blocked.",
     }
 
 
-def replace_config_version(text: str, version: str) -> str:
-    new_text, count = re.subn(r'(?m)^version: "[^"]*"$', f'version: "{version}"', text)
-    require(count == 1, "ftw/config.yaml version line was not found")
-    new_text, count = re.subn(
-        r'(?m)^  FTW_BUNDLE_VERSION: "[^"]*"$',
+def replace_line(text: str, pattern: str, replacement: str, name: str) -> str:
+    matches = re.findall(pattern, text, flags=re.MULTILINE)
+    require(len(matches) == 1, f"config.yaml must contain exactly one {name} line")
+    return re.sub(pattern, replacement, text, count=1, flags=re.MULTILINE)
+
+
+def replace_config_version(text: str, version: str, core_version: str) -> str:
+    text = replace_line(text, r'^version: "[^"\n]*"$', f'version: "{version}"', "version")
+    text = replace_line(
+        text,
+        r'^  FTW_BUNDLE_VERSION: "[^"\n]*"$',
         f'  FTW_BUNDLE_VERSION: "{version}"',
-        new_text,
+        "FTW_BUNDLE_VERSION",
     )
-    require(count == 1, "ftw/config.yaml FTW_BUNDLE_VERSION line was not found")
-    return new_text
+    return replace_line(text, r"^  FTW_IMAGE_TAG: [^\n]*$", f"  FTW_IMAGE_TAG: {core_version}", "FTW_IMAGE_TAG")
 
 
-def prepend_changelog(text: str, version: str, core_pin: dict[str, Any] | None, optimizer_pin: dict[str, Any] | None) -> str:
-    marker = "# Changelog\n\n"
-    require(text.startswith(marker), "ftw/CHANGELOG.md header is missing")
-    lines = []
-    if core_pin is not None:
-        lines.append(f"- Update Core to {core_pin['version']}.")
-    if optimizer_pin is not None:
-        lines.append(f"- Update Optimizer to {optimizer_pin['version']}.")
-    lines.append(
-        "- Automated upstream pin sync. Home Assistant OS and Supervisor"
-        " qualification is still required before stable promotion."
-    )
-    entry = f"## {version}\n\n" + "\n".join(lines) + "\n\n"
-    return marker + entry + text[len(marker):]
+def render_stable_config(beta_text: str, version: str, core_version: str) -> str:
+    """Derive ftw/config.yaml from the beta manifest: same contract, stable identity."""
+    text = beta_text
+    for key, line in STABLE_CONFIG_LINES.items():
+        text = replace_line(text, rf"^{key}: [^\n]*$", line, key)
+    matches = re.findall(r"^stage: [^\n]*\n", text, flags=re.MULTILINE)
+    require(len(matches) == 1, "beta config.yaml must contain exactly one stage line")
+    text = re.sub(r"^stage: [^\n]*\n", "", text, count=1, flags=re.MULTILINE)
+    return replace_config_version(text, version, core_version)
 
 
-def compose_updates(
+def prepend_changelog(text: str, version: str, lines: list[str]) -> str:
+    header = "# Changelog\n"
+    require(text.startswith(header), "CHANGELOG.md must start with the changelog header")
+    body = text[len(header):].lstrip("\n")
+    entry = f"## {version}\n\n" + "".join(f"- {line}\n" for line in lines)
+    return f"{header}\n{entry}\n{body}" if body else f"{header}\n{entry}"
+
+
+def compose_beta_update(
     *,
     compat: dict[str, Any],
     config_text: str,
     changelog_text: str,
-    core_pin: dict[str, Any] | None,
-    optimizer_pin: dict[str, Any] | None,
-    new_version: str,
-    update_from: str | None,
-) -> tuple[dict[str, Any], str, str, dict[str, Any]]:
+    pin: dict[str, Any],
+    baseline: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    version = add_on_version(pin["version"])
     updated = copy.deepcopy(compat)
-    add_on = updated["add_on"]
-    add_on["version"] = new_version
-    add_on["channel"] = "beta"
-    add_on["manifest_digest"] = PUBLISHER_MARKER
-    upstream_gate = updated["qualification"]["upstream_gate"]
-    evidence = dict(upstream_gate.get("evidence") or {})
-    if core_pin is not None:
-        live_pilot = extract_live_pilot_evidence(core_pin["body"])
-        require(
-            live_pilot is not None,
-            f"Core {core_pin['version']} release lacks labeled live-pilot evidence",
-        )
-        core = updated["core"]
-        core["version"] = core_pin["version"]
-        core["digest"] = core_pin["digest"]
-        core["commit"] = core_pin["commit"]
-        evidence["core_release"] = core_pin["release_url"]
-        evidence["core_build"] = core_pin["build_url"]
-        evidence["core_live_pilot"] = live_pilot
-    if optimizer_pin is not None:
-        optimizer = updated["optimizer"]
-        optimizer["version"] = optimizer_pin["version"]
-        optimizer["digest"] = optimizer_pin["digest"]
-        optimizer["commit"] = optimizer_pin["commit"]
-        evidence["optimizer_release"] = optimizer_pin["release_url"]
-        evidence["optimizer_build"] = optimizer_pin["build_url"]
-    upstream_gate["status"] = "passed"
-    upstream_gate["evidence"] = evidence
-    updated["qualification"]["home_assistant_os_supervisor"] = {
-        "status": "blocked",
-        "evidence": None,
-        "record": f"pilot/{new_version}.yaml",
+    updated["beta"] = {
+        "add_on": ADD_ON_DIRECTORIES["beta"],
+        "version": version,
+        "core": {
+            "version": pin["version"],
+            "commit": pin["commit"],
+            "digest": pin["digest"],
+            "release": pin["release_url"],
+        },
     }
-    updated["qualification"]["promoted_from_beta"] = {
-        "channel": None,
-        "version": None,
-        "manifest_digest": None,
-        "source_commit": None,
-    }
-    config_new = replace_config_version(config_text, new_version)
-    changelog_new = prepend_changelog(changelog_text, new_version, core_pin, optimizer_pin)
-    pilot = render_pilot_record(updated, new_version, update_from)
-    return updated, config_new, changelog_new, pilot
+    updated["drivers"]["tested_baseline"] = copy.deepcopy(baseline)
+    config = replace_config_version(config_text, version, pin["version"])
+    changelog = prepend_changelog(
+        changelog_text,
+        version,
+        [
+            f"Update Core to {pin['version']} (`{pin['digest']}`).",
+            f"Record the stable driver baseline `{baseline['commit'][:12]}`.",
+        ],
+    )
+    return updated, config, changelog
 
 
-class YamlDumper(yaml.SafeDumper):
+def add_on_beta_release(repository: str, version: str) -> dict[str, Any] | None:
+    tag = f"ftw-v{version}"
+    if gh_api_optional(f"repos/{repository}/releases/tags/{tag}") is None:
+        return None
+    try:
+        manifest = json.loads(download_release_asset(repository, tag, "release-manifest.json"))
+    except ImageNotReady as error:
+        raise SyncError(f"{tag} exists without a release manifest: {error}") from error
+    require(isinstance(manifest, dict), f"{tag} release manifest is invalid")
+    require(manifest.get("channel") == "beta", f"{tag} release manifest is not a beta record")
+    require(manifest.get("version") == version, f"{tag} release manifest names a different version")
+    require(DIGEST.fullmatch(str(manifest.get("manifest_digest", ""))) is not None, f"{tag} manifest digest is invalid")
+    require(COMMIT.fullmatch(str(manifest.get("source_commit", ""))) is not None, f"{tag} source commit is invalid")
+    core = manifest.get("core")
+    require(isinstance(core, dict) and DIGEST.fullmatch(str(core.get("digest", ""))) is not None, f"{tag} lacks a Core digest")
+    return manifest
+
+
+def compose_stable_update(
+    *,
+    compat: dict[str, Any],
+    beta_config_text: str,
+    changelog_text: str,
+    pin: dict[str, Any],
+    add_on_beta: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    version = add_on_version(pin["version"])
+    beta_version = add_on_version(pin["source_beta"])
+    require(
+        add_on_beta.get("version") == beta_version,
+        f"FTW {pin['version']} was promoted from {pin['source_beta']}, not app beta {add_on_beta.get('version')}",
+    )
+    require(
+        add_on_beta["core"]["digest"] == pin["digest"],
+        f"app beta {beta_version} was built from Core {add_on_beta['core']['digest']}, but FTW promoted {pin['digest']}",
+    )
+    updated = copy.deepcopy(compat)
+    updated["stable"] = {
+        "add_on": ADD_ON_DIRECTORIES["stable"],
+        "version": version,
+        "promoted_from_beta": beta_version,
+        "manifest_digest": add_on_beta["manifest_digest"],
+        "source_commit": add_on_beta["source_commit"],
+        "core": {
+            "version": pin["version"],
+            "commit": pin["commit"],
+            "digest": pin["digest"],
+            "release": pin["release_url"],
+        },
+    }
+    config = render_stable_config(beta_config_text, version, pin["version"])
+    changelog = prepend_changelog(
+        changelog_text,
+        version,
+        [
+            f"Promote app beta {beta_version} (Core {pin['version']}, `{pin['digest']}`) to stable.",
+            "The image is the tested beta manifest re-tagged; nothing was rebuilt.",
+        ],
+    )
+    return updated, config, changelog
+
+
+class IndentedDumper(yaml.SafeDumper):
     def increase_indent(self, flow: bool = False, indentless: bool = False) -> Any:
         return super().increase_indent(flow, False)
 
 
 def dump_yaml(value: dict[str, Any]) -> str:
-    return yaml.dump(
-        value,
-        Dumper=YamlDumper,
-        sort_keys=False,
-        default_flow_style=False,
-        allow_unicode=True,
-        width=4096,
-    )
+    return yaml.dump(value, Dumper=IndentedDumper, sort_keys=False, allow_unicode=True, width=120)
 
 
-def render_pr_body(
-    *,
-    previous: dict[str, str],
-    new_version: str,
-    compat: dict[str, Any],
-    core_pin: dict[str, Any] | None,
-    optimizer_pin: dict[str, Any] | None,
-) -> str:
-    def cell(pin: dict[str, Any] | None, current: str) -> str:
-        if pin is None:
-            return f"{current} (unchanged)"
-        return f"[{pin['version']}]({pin['release_url']})"
-
-    evidence = compat["qualification"]["upstream_gate"]["evidence"]
-    details = []
-    for name, pin in (("Core", core_pin), ("Optimizer", optimizer_pin)):
-        if pin is None:
-            continue
-        details.append(f"- {name} `{pin['version']}` at commit `{pin['commit']}`")
-        details.append(f"  - Digest: `{pin['digest']}`")
-        details.append(f"  - Release: {pin['release_url']}")
-        if pin["build_url"]:
-            details.append(f"  - Build: {pin['build_url']}")
-    if core_pin is not None:
-        details.append(f"- Core live-pilot evidence: {evidence['core_live_pilot']}")
-    baseline = compat["drivers"]["tested_baseline"]
-    details.append(f"- Drivers: unchanged tested baseline `{baseline['commit']}`")
-    detail_text = "\n".join(details)
-    return f"""Automated upstream pin sync.
-
-| Component | From | To |
-| --- | --- | --- |
-| Add-on | {previous['add_on']} | {new_version} |
-| Core | {previous['core']} | {cell(core_pin, previous['core'])} |
-| Optimizer | {previous['optimizer']} | {cell(optimizer_pin, previous['optimizer'])} |
-
-Merging this PR lets **Auto publish beta** dispatch **Publish beta**, which
-builds, signs, and releases `{new_version}` on the beta channel. All release
-gates still apply.
-
-<details>
-<summary>Exact pins, commits, and evidence</summary>
-
-{detail_text}
-
-</details>
-"""
+def load_yaml(path: pathlib.Path) -> dict[str, Any]:
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    require(isinstance(value, dict), f"{path} must contain an object")
+    return value
 
 
 def write_output(name: str, value: str) -> None:
@@ -526,101 +468,157 @@ def write_output(name: str, value: str) -> None:
         print(f"{name}={value}")
 
 
-def load_yaml(path: pathlib.Path) -> dict[str, Any]:
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    require(isinstance(value, dict), f"{path} must contain an object")
-    return value
+def plan(
+    *,
+    repository: str,
+    upstream: str,
+    compat: dict[str, Any],
+    beta_config_text: str,
+    beta_changelog_text: str,
+    stable_changelog_text: str,
+    releases: list[Any],
+) -> dict[str, Any]:
+    """Decide what changes; touches the network only through the helpers above."""
+    result: dict[str, Any] = {"compat": compat, "files": {}, "changed": [], "pins": {}}
+    beta_release = select_latest_release(releases, "beta")
+    stable_release = select_latest_release(releases, "stable")
+    require(beta_release is not None, "no Core beta release was found upstream")
+
+    try:
+        beta_pin = resolve_core_pin(
+            upstream=upstream,
+            release=beta_release,
+            channel="beta",
+            current_version=str(compat["beta"]["core"]["version"]),
+        )
+    except ImageNotReady as error:
+        print(f"::notice::upstream beta is not ready yet, retrying later: {error}")
+        beta_pin = None
+    if beta_pin is not None:
+        baseline = current_driver_baseline(compat["drivers"])
+        compat, config, changelog = compose_beta_update(
+            compat=compat,
+            config_text=beta_config_text,
+            changelog_text=beta_changelog_text,
+            pin=beta_pin,
+            baseline=baseline,
+        )
+        result["files"]["ftw-beta/config.yaml"] = config
+        result["files"]["ftw-beta/CHANGELOG.md"] = changelog
+        result["changed"].append("beta")
+        result["pins"]["beta"] = beta_pin
+
+    pilot = compat["qualification"]["home_assistant_os_supervisor"]
+    if stable_release is not None and pilot.get("status") != "passed":
+        print(
+            "::notice::stable channel is blocked until compatibility.yaml records a passed "
+            f"Home Assistant OS and Supervisor pilot; not promoting {stable_release.get('tag_name')}"
+        )
+    elif stable_release is not None:
+        current = compat["stable"].get("core") or {}
+        try:
+            stable_pin = resolve_core_pin(
+                upstream=upstream,
+                release=stable_release,
+                channel="stable",
+                current_version=str(current.get("version") or ""),
+            )
+        except ImageNotReady as error:
+            print(f"::notice::upstream stable is not ready yet, retrying later: {error}")
+            stable_pin = None
+        if stable_pin is not None:
+            beta_version = add_on_version(stable_pin["source_beta"])
+            record = add_on_beta_release(repository, beta_version)
+            if record is None:
+                print(
+                    f"::notice::FTW {stable_pin['version']} was promoted from {stable_pin['source_beta']}, "
+                    f"but app beta {beta_version} is not published yet; retrying later"
+                )
+            else:
+                compat, config, changelog = compose_stable_update(
+                    compat=compat,
+                    beta_config_text=beta_config_text,
+                    changelog_text=stable_changelog_text,
+                    pin=stable_pin,
+                    add_on_beta=record,
+                )
+                result["files"]["ftw/config.yaml"] = config
+                result["files"]["ftw/CHANGELOG.md"] = changelog
+                result["changed"].append("stable")
+                result["pins"]["stable"] = stable_pin
+
+    result["compat"] = compat
+    return result
+
+
+def render_pr_body(previous: dict[str, Any], planned: dict[str, Any]) -> str:
+    lines = ["| Channel | App | Before | After | Core |", "|---|---|---|---|---|"]
+    for channel in planned["changed"]:
+        pin = planned["pins"][channel]
+        before = previous[channel].get("version") or "none"
+        after = planned["compat"][channel]["version"]
+        lines.append(
+            f"| {channel} | `{ADD_ON_DIRECTORIES[channel]}` | `{before}` | `{after}` | "
+            f"[{pin['version']}]({pin['release_url']}) |"
+        )
+    details = []
+    for channel in planned["changed"]:
+        pin = planned["pins"][channel]
+        details.append(f"- {channel}: commit `{pin['commit']}`, Core digest `{pin['digest']}`")
+        if channel == "stable":
+            stable = planned["compat"]["stable"]
+            details.append(
+                f"  promoted from app beta `{stable['promoted_from_beta']}` at `{stable['manifest_digest']}`"
+            )
+    baseline = planned["compat"]["drivers"]["tested_baseline"]
+    return (
+        "Automated pin from the upstream sync workflow.\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        + "\n".join(details)
+        + f"\n- stable driver baseline `{baseline['commit']}` (manifest SHA-256 `{baseline['manifest_sha256']}`)\n\n"
+        "Merging publishes through Auto publish. Beta builds from the Core digest; stable re-tags the beta digest.\n"
+    )
 
 
 def sync(args: argparse.Namespace) -> None:
     compat = load_yaml(ROOT / "compatibility.yaml")
-    config_text = (ROOT / "ftw/config.yaml").read_text(encoding="utf-8")
-    changelog_text = (ROOT / "ftw/CHANGELOG.md").read_text(encoding="utf-8")
-    previous = {
-        "add_on": str(compat["add_on"]["version"]),
-        "core": str(compat["core"]["version"]),
-        "optimizer": str(compat["optimizer"]["version"]),
-    }
-
+    previous = copy.deepcopy(compat)
     releases = gh_api(f"repos/{args.upstream}/releases?per_page=100")
     require(isinstance(releases, list), "upstream releases response is invalid")
-    core_release = select_latest_release(releases, CORE_TAG)
-    optimizer_release = select_latest_release(releases, OPTIMIZER_TAG)
-    require(core_release is not None, "no Core release was found upstream")
-    require(optimizer_release is not None, "no Optimizer release was found upstream")
-
-    try:
-        core_pin = resolve_pin(
-            upstream=args.upstream,
-            release=core_release,
-            image=CORE_IMAGE,
-            current_version=previous["core"],
-        )
-        optimizer_pin = resolve_pin(
-            upstream=args.upstream,
-            release=optimizer_release,
-            image=OPTIMIZER_IMAGE,
-            current_version=previous["optimizer"],
-        )
-    except ImageNotReady as error:
-        print(f"::notice::upstream release is not ready yet, retrying later: {error}")
-        write_output("changed", "false")
-        return
-
-    if core_pin is None and optimizer_pin is None:
+    stable_changelog = ROOT / "ftw/CHANGELOG.md"
+    planned = plan(
+        repository=args.repository,
+        upstream=args.upstream,
+        compat=compat,
+        beta_config_text=(ROOT / "ftw-beta/config.yaml").read_text(encoding="utf-8"),
+        beta_changelog_text=(ROOT / "ftw-beta/CHANGELOG.md").read_text(encoding="utf-8"),
+        stable_changelog_text=(
+            stable_changelog.read_text(encoding="utf-8") if stable_changelog.is_file() else "# Changelog\n"
+        ),
+        releases=releases,
+    )
+    if not planned["changed"]:
         print("pins already match the latest upstream releases")
         write_output("changed", "false")
         return
 
-    if core_pin is not None and extract_live_pilot_evidence(core_pin["body"]) is None:
-        print(
-            f"::notice::Core {core_pin['version']} has no labeled live-pilot evidence; retrying later"
-        )
-        write_output("changed", "false")
-        return
-
-    def tag_exists(tag: str) -> bool:
-        return gh_api_optional(f"repos/{args.repository}/git/ref/tags/{tag}") is not None
-
-    new_version = next_add_on_version(previous["add_on"], tag_exists)
-    update_from = previous["add_on"] if tag_exists(f"ftw-v{previous['add_on']}") else None
-    new_compat, new_config, new_changelog, pilot = compose_updates(
-        compat=compat,
-        config_text=config_text,
-        changelog_text=changelog_text,
-        core_pin=core_pin,
-        optimizer_pin=optimizer_pin,
-        new_version=new_version,
-        update_from=update_from,
-    )
-
-    (ROOT / "compatibility.yaml").write_text(dump_yaml(new_compat), encoding="utf-8")
-    (ROOT / "ftw/config.yaml").write_text(new_config, encoding="utf-8")
-    (ROOT / "ftw/CHANGELOG.md").write_text(new_changelog, encoding="utf-8")
-    (ROOT / f"pilot/{new_version}.yaml").write_text(dump_yaml(pilot), encoding="utf-8")
+    (ROOT / "compatibility.yaml").write_text(dump_yaml(planned["compat"]), encoding="utf-8")
+    for name, text in planned["files"].items():
+        (ROOT / name).write_text(text, encoding="utf-8")
     if args.pr_body is not None:
-        args.pr_body.write_text(
-            render_pr_body(
-                previous=previous,
-                new_version=new_version,
-                compat=new_compat,
-                core_pin=core_pin,
-                optimizer_pin=optimizer_pin,
-            ),
-            encoding="utf-8",
-        )
+        args.pr_body.write_text(render_pr_body(previous, planned), encoding="utf-8")
 
-    parts = []
-    if core_pin is not None:
-        parts.append(f"Core {core_pin['version']}")
-    if optimizer_pin is not None:
-        parts.append(f"Optimizer {optimizer_pin['version']}")
-    title = f"chore: pin {' and '.join(parts)} as {new_version}"
+    parts = [
+        f"{ADD_ON_DIRECTORIES[channel]} {planned['compat'][channel]['version']} "
+        f"from Core {planned['pins'][channel]['version']}"
+        for channel in planned["changed"]
+    ]
+    versions = "-".join(planned["compat"][channel]["version"] for channel in planned["changed"])
     write_output("changed", "true")
-    write_output("add_on_version", new_version)
-    write_output("branch", f"bot/sync-ftw-{new_version}")
-    write_output("pr_title", title)
-    print(f"prepared {new_version}: {title}")
+    write_output("branch", f"bot/sync-ftw-{versions}")
+    write_output("pr_title", f"chore: pin {' and '.join(parts)}")
+    print(f"prepared {', '.join(planned['changed'])}: {' and '.join(parts)}")
 
 
 def main() -> int:

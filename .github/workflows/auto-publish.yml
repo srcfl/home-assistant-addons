@@ -1,0 +1,140 @@
+name: Auto publish
+
+# Dispatches Publish beta for a beta version without a tag and Promote stable
+# for a stable version without a tag. Runs after the sync merges a pin, on the
+# hour as a fallback, and by hand. It builds and publishes nothing itself.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ftw/config.yaml
+      - ftw-beta/config.yaml
+      - compatibility.yaml
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftw-publish-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Publish the unreleased versions
+    if: github.repository == 'srcfl/home-assistant-addons'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: python -m pip install -r scripts/requirements.txt
+      - id: state
+        name: Read the pending versions
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          import yaml
+
+          compat = yaml.safe_load(pathlib.Path("compatibility.yaml").read_text(encoding="utf-8"))
+          beta_config = yaml.safe_load(pathlib.Path("ftw-beta/config.yaml").read_text(encoding="utf-8"))
+          beta_version = str(beta_config.get("version", ""))
+          beta_pending = (
+              re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+", beta_version) is not None
+              and compat["beta"].get("version") == beta_version
+          )
+          stable = compat["stable"]
+          stable_config_path = pathlib.Path("ftw/config.yaml")
+          stable_version = ""
+          stable_pending = False
+          if stable_config_path.is_file() and stable.get("version") is not None:
+              stable_config = yaml.safe_load(stable_config_path.read_text(encoding="utf-8"))
+              stable_version = str(stable_config.get("version", ""))
+              stable_pending = (
+                  re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", stable_version) is not None
+                  and stable.get("version") == stable_version
+                  and compat["qualification"]["home_assistant_os_supervisor"].get("status") == "passed"
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as target:
+              target.write(f"beta_version={beta_version}\n")
+              target.write(f"beta_pending={'true' if beta_pending else 'false'}\n")
+              target.write(f"stable_version={stable_version}\n")
+              target.write(f"stable_pending={'true' if stable_pending else 'false'}\n")
+              target.write(f"stable_beta_version={stable.get('promoted_from_beta') or ''}\n")
+              target.write(f"stable_beta_digest={stable.get('manifest_digest') or ''}\n")
+          PY
+      - name: Dispatch Publish beta
+        if: steps.state.outputs.beta_pending == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.beta_version }}
+        run: |
+          tag="ftw-v${VERSION}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "::notice::${tag} already exists; nothing to publish"
+            exit 0
+          fi
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::notice::release ${tag} already exists; nothing to publish"
+            exit 0
+          fi
+          active_release="$(gh run list --workflow=release-beta.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          active_finalize="$(gh run list --workflow=finalize-beta.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          if [ "${active_release}" != "0" ] || [ "${active_finalize}" != "0" ]; then
+            echo "::notice::a beta publication or finalizer is already active; skipping dispatch"
+            exit 0
+          fi
+          gh workflow run release-beta.yml --ref main -f "version=${VERSION}"
+          echo "::notice::dispatched Publish beta for ${VERSION}"
+      - name: Dispatch Promote stable
+        if: steps.state.outputs.stable_pending == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.stable_version }}
+          BETA_VERSION: ${{ steps.state.outputs.stable_beta_version }}
+          BETA_DIGEST: ${{ steps.state.outputs.stable_beta_digest }}
+        run: |
+          tag="ftw-v${VERSION}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "::notice::${tag} already exists; nothing to promote"
+            exit 0
+          fi
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::notice::release ${tag} already exists; nothing to promote"
+            exit 0
+          fi
+          if ! gh release view "ftw-v${BETA_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::notice::beta release ftw-v${BETA_VERSION} is not published yet; skipping promotion"
+            exit 0
+          fi
+          active_promote="$(gh run list --workflow=promote-stable.yml --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status == "queued" or .status == "in_progress")] | length')"
+          if [ "${active_promote}" != "0" ]; then
+            echo "::notice::a stable promotion is already active; skipping dispatch"
+            exit 0
+          fi
+          gh workflow run promote-stable.yml --ref main \
+            -f "version=${VERSION}" \
+            -f "beta_version=${BETA_VERSION}" \
+            -f "beta_digest=${BETA_DIGEST}"
+          echo "::notice::dispatched Promote stable for ${VERSION} from ${BETA_VERSION}"

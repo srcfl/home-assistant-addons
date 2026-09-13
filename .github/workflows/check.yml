@@ -26,18 +26,16 @@ jobs:
       - run: python -m pip install -r scripts/requirements.txt
       - run: python scripts/validate.py
       - run: python -m unittest discover -s tests -p 'test_*.py'
-      - run: python -m compileall -q ftw scripts tests/fixtures
-      - run: shellcheck ftw/run.sh scripts/smoke.sh
+      - run: python -m compileall -q scripts tests/fixtures
+      - run: shellcheck ftw/run.sh ftw/healthcheck.sh scripts/smoke.sh
       - name: Check executable files
         run: |
           test -x ftw/run.sh
-          test -x ftw/healthcheck.py
+          test -x ftw/healthcheck.sh
           test -x scripts/validate.py
           test -x scripts/release_gate.py
           test -x scripts/smoke.sh
           test -x tests/fixtures/core/app/ftw
-          test -x tests/fixtures/optimizer/ftw-optimizer
-          test -x tests/fixtures/optimizer/ftw-optimizer-healthcheck
 
   home-assistant-lint:
     name: Home Assistant app lint
@@ -47,6 +45,19 @@ jobs:
         with:
           persist-credentials: false
       - uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./ftw-beta
+      - id: stable
+        name: Detect the stable app
+        run: |
+          if [ -f ftw/config.yaml ]; then
+            echo "exists=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >>"${GITHUB_OUTPUT}"
+            echo "::notice::ftw/config.yaml is absent until the first stable promotion"
+          fi
+      - uses: frenck/action-addon-linter@v2.21
+        if: steps.stable.outputs.exists == 'true'
         with:
           path: ./ftw
 
@@ -74,22 +85,17 @@ jobs:
       - uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false
-      - name: Build fixture inputs
-        run: |
-          docker build --tag "ftw-core-fixture:${{ matrix.arch }}" tests/fixtures/core
-          docker build --tag "ftw-optimizer-fixture:${{ matrix.arch }}" tests/fixtures/optimizer
+      - name: Build the Core fixture
+        run: docker build --tag "ftw-core-fixture:${{ matrix.arch }}" tests/fixtures/core
       - name: Build app image
         run: |
           docker build \
             --build-arg "FTW_CORE_FROM=ftw-core-fixture:${{ matrix.arch }}" \
-            --build-arg "FTW_OPTIMIZER_FROM=ftw-optimizer-fixture:${{ matrix.arch }}" \
             --build-arg "BUILD_ARCH=${{ matrix.arch }}" \
             --build-arg BUILD_VERSION=0.0.0-dev \
             --build-arg "BUILD_SHA=${{ github.sha }}" \
             --build-arg CORE_VERSION=fixture-core \
             --build-arg "CORE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000" \
-            --build-arg OPTIMIZER_VERSION=fixture-optimizer \
-            --build-arg "OPTIMIZER_DIGEST=sha256:1111111111111111111111111111111111111111111111111111111111111111" \
             --tag "ftw-home-assistant-ci:${{ matrix.arch }}" \
             ftw
       - name: Smoke runtime, restart, and persistence

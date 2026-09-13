@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable add-on SemVer, for example 0.1.0
+        description: Stable app version from ftw/config.yaml, for example 3.4.2
         required: true
         type: string
       beta_version:
-        description: Qualified beta SemVer, for example 0.1.0-beta.1
+        description: Promoted beta version from compatibility.yaml, for example 3.4.2-beta.4
         required: true
         type: string
       beta_digest:
-        description: Qualified beta manifest digest
+        description: Promoted beta manifest digest from compatibility.yaml
         required: true
         type: string
 

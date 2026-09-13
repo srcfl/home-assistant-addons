@@ -13,9 +13,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-wait_for_optimizer() {
-  for _ in {1..120}; do
-    if docker exec "${name}" /opt/venv/bin/ftw-optimizer-healthcheck >/dev/null 2>&1; then
+# Supervisor runs the app with Docker's default init because config.yaml leaves
+# `init` alone, so Core is the child of docker-init rather than PID 1.
+start() {
+  docker run -d --init --name "${name}" --volume "${volume}:/data" "${image}" >/dev/null
+}
+
+wait_healthy() {
+  for _ in {1..60}; do
+    if [[ "$(docker inspect --format '{{.State.Health.Status}}' "${name}")" == healthy ]]; then
       return 0
     fi
     sleep 1
@@ -24,49 +30,39 @@ wait_for_optimizer() {
   return 1
 }
 
+core_pid() {
+  docker exec "${name}" bash -ceu '
+    for status in /proc/[0-9]*/status; do
+      if grep -q "^Name:	ftw$" "${status}" 2>/dev/null; then
+        basename "$(dirname "${status}")"
+        exit 0
+      fi
+    done
+    exit 1'
+}
+
 docker volume create "${volume}" >/dev/null
-docker run -d --name "${name}" --volume "${volume}:/data" "${image}" >/dev/null
+start
+wait_healthy
 
-for _ in {1..60}; do
-  if [[ "$(docker inspect --format '{{.State.Health.Status}}' "${name}")" == healthy ]]; then
-    break
-  fi
-  sleep 1
-done
-[[ "$(docker inspect --format '{{.State.Health.Status}}' "${name}")" == healthy ]]
-
-wait_for_optimizer
-docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_OPTIMIZER_TRANSPORT" = unix'
+docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon'
 docker exec "${name}" bash -ceu 'test "$FTW_IMAGE_TAG" = "$1"' -- "${expected_core_version}"
-docker exec "${name}" bash -ceu 'install -d -o 100 -g 101 /data/drivers; printf "%s\n" "-- user marker" >/data/drivers/custom.lua; : >/data/config.yaml; chown 100:101 /data/config.yaml /data/drivers/custom.lua'
-docker exec "${name}" /usr/local/bin/healthcheck.py
+docker exec "${name}" /usr/local/bin/healthcheck.sh
 
-old_optimizer_pid="$(docker exec "${name}" bash -ceu 'cat /run/ftw-optimizer/worker.pid')"
-docker exec "${name}" bash -ceu 'kill -TERM "$1"' -- "${old_optimizer_pid}"
-docker exec "${name}" /usr/local/bin/healthcheck.py
-for _ in {1..70}; do
-  new_optimizer_pid="$(docker exec "${name}" bash -ceu 'cat /run/ftw-optimizer/worker.pid 2>/dev/null || true')"
-  if [[ -n "${new_optimizer_pid}" && "${new_optimizer_pid}" != "${old_optimizer_pid}" ]]; then
-    break
-  fi
-  sleep 1
-done
-[[ -n "${new_optimizer_pid}" && "${new_optimizer_pid}" != "${old_optimizer_pid}" ]]
-wait_for_optimizer
-docker exec "${name}" /usr/local/bin/healthcheck.py
+# Core runs unprivileged even though the wrapper started as root.
+pid="$(core_pid)"
+docker exec "${name}" bash -ceu 'test "$(stat -c %u "/proc/$1")" = 100' -- "${pid}"
+
+docker exec "${name}" bash -ceu 'install -d -o 100 -g 101 /data/drivers; printf "%s\n" "-- user marker" >/data/drivers/custom.lua; : >/data/config.yaml; chown 100:101 /data/config.yaml /data/drivers/custom.lua'
+docker exec "${name}" /usr/local/bin/healthcheck.sh
 
 docker stop --time 20 "${name}" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "${name}")" == 0 ]]
 docker rm "${name}" >/dev/null
 
-docker run -d --name "${name}" --volume "${volume}:/data" "${image}" >/dev/null
-for _ in {1..60}; do
-  if docker exec "${name}" /usr/local/bin/healthcheck.py >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-docker exec "${name}" /usr/local/bin/healthcheck.py
+start
+wait_healthy
+docker exec "${name}" /usr/local/bin/healthcheck.sh
 docker exec "${name}" grep -Fx -- '-- user marker' /data/drivers/custom.lua
 if docker exec "${name}" bash -ceu \
   'for process in /proc/[0-9]*/cmdline; do tr "\0" " " <"${process}"; printf "\n"; done' \
@@ -75,8 +71,9 @@ if docker exec "${name}" bash -ceu \
   exit 1
 fi
 
-core_pid="$(docker exec "${name}" bash -ceu 'cat /run/ftw/core.pid')"
-docker exec "${name}" bash -ceu 'kill -KILL "$1"' -- "${core_pid}"
+# Core dying must end the container so Supervisor restarts it.
+pid="$(core_pid)"
+docker exec "${name}" kill -KILL "${pid}"
 for _ in {1..30}; do
   if [[ "$(docker inspect --format '{{.State.Running}}' "${name}")" == false ]]; then
     break

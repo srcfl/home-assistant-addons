@@ -32,17 +32,13 @@ def raw_fixture(name: str) -> bytes:
 
 def compatibility() -> dict:
     return {
-        "add_on": {
-            "image": "ghcr.io/srcfl/home-assistant-addons/ftw",
+        "image": "ghcr.io/srcfl/home-assistant-addons/ftw",
+        "stable": {
+            "add_on": "ftw",
+            "version": "0.1.0",
+            "promoted_from_beta": "0.1.0-beta.1",
             "manifest_digest": DIGEST,
-        },
-        "qualification": {
-            "promoted_from_beta": {
-                "channel": "beta",
-                "version": "0.1.0-beta.1",
-                "manifest_digest": DIGEST,
-                "source_commit": COMMIT,
-            }
+            "source_commit": COMMIT,
         },
     }
 
@@ -204,13 +200,13 @@ class ImageEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(release_gate.GateError, "version label"):
                     self.validate(expected_version="v2.0.0")
 
-    def test_optimizer_does_not_accept_the_core_base_label_contract(self) -> None:
+    def test_other_images_require_the_exact_version_label(self) -> None:
         for image in self.images.values():
             image["config"]["Labels"]["org.opencontainers.image.version"] = "1.2.3"
         with self.assertRaisesRegex(release_gate.GateError, "version label"):
             self.validate(
                 expected_version="v1.2.3",
-                image_repository="ghcr.io/srcfl/ftw-optimizer",
+                image_repository="ghcr.io/example/other",
             )
 
 
@@ -331,18 +327,13 @@ class AddOnImageEvidenceTests(unittest.TestCase):
             "org.opencontainers.image.revision": "e" * 40,
             "com.sourceful.ftw.core.version": "v1.10.0-beta.1",
             "com.sourceful.ftw.core.digest": "sha256:" + "a" * 64,
-            "com.sourceful.ftw.optimizer.version": "v1.3.2-beta.1",
-            "com.sourceful.ftw.optimizer.digest": "sha256:" + "b" * 64,
             "com.sourceful.ftw.update-owner": "home_assistant_supervisor",
         }
         self.images = {
             "amd64": {"config": {"Labels": {**labels, "io.hass.arch": "amd64"}}},
             "arm64": {"config": {"Labels": {**labels, "io.hass.arch": "aarch64"}}},
         }
-        self.compatibility = {
-            "core": {"version": "v1.10.0-beta.1", "digest": "sha256:" + "a" * 64},
-            "optimizer": {"version": "v1.3.2-beta.1", "digest": "sha256:" + "b" * 64},
-        }
+        self.core_pin = {"version": "v1.10.0-beta.1", "digest": "sha256:" + "a" * 64}
 
     def validate(self) -> dict[str, str]:
         return release_gate.validate_add_on_platforms(
@@ -350,7 +341,7 @@ class AddOnImageEvidenceTests(unittest.TestCase):
             platform_images=self.images,
             expected_version="0.1.0-beta.1",
             expected_commit="e" * 40,
-            compatibility=self.compatibility,
+            core_pin=self.core_pin,
         )
 
     def test_exact_architectures_and_labels_pass(self) -> None:
@@ -385,7 +376,7 @@ class AddOnImageEvidenceTests(unittest.TestCase):
                         platform_images=images,
                         expected_version="0.1.0-beta.1",
                         expected_commit="e" * 40,
-                        compatibility=self.compatibility,
+                        core_pin=self.core_pin,
                     )
 
     def test_attestation_descriptors_are_required(self) -> None:
@@ -533,16 +524,36 @@ class BetaManifestTests(unittest.TestCase):
             path = pathlib.Path(directory) / "release-manifest.json"
             release_gate.write_beta_release_manifest(
                 path=path,
-                version=str(compat["add_on"]["version"]),
+                version=str(compat["beta"]["version"]),
                 digest=DIGEST,
                 source_commit=COMMIT,
             )
             manifest = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["channel"], "beta")
+        self.assertEqual(manifest["image"], compat["image"])
         self.assertEqual(manifest["source_commit"], COMMIT)
         self.assertEqual(manifest["manifest_digest"], DIGEST)
-        self.assertEqual(manifest["core"]["version"], compat["core"]["version"])
-        self.assertEqual(manifest["optimizer"]["version"], compat["optimizer"]["version"])
+        self.assertEqual(
+            manifest["core"],
+            {
+                "version": compat["beta"]["core"]["version"],
+                "digest": compat["beta"]["core"]["digest"],
+                "commit": compat["beta"]["core"]["commit"],
+            },
+        )
+        self.assertNotIn("optimizer", manifest)
         self.assertNotIn("updater", manifest)
+
+    def test_manifest_version_must_match_the_beta_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(release_gate.GateError, "version mismatch"):
+                release_gate.write_beta_release_manifest(
+                    path=pathlib.Path(directory) / "release-manifest.json",
+                    version="9.9.9-beta.9",
+                    digest=DIGEST,
+                    source_commit=COMMIT,
+                )
 
 class DriverManifestTests(unittest.TestCase):
     def validate(self, raw: bytes, *, sha256: str = DRIVER_SHA256) -> dict:
@@ -632,8 +643,19 @@ class StableGateTests(unittest.TestCase):
 
     def test_compatibility_source_commit_mismatch_fails(self) -> None:
         compat = compatibility()
-        compat["qualification"]["promoted_from_beta"]["source_commit"] = "f" * 40
+        compat["stable"]["source_commit"] = "f" * 40
         with self.assertRaisesRegex(release_gate.GateError, "source_commit"):
+            release_gate.validate_beta_release_record(
+                manifest=fixture("beta-release-manifest.json"),
+                compatibility=compat,
+                beta_version="0.1.0-beta.1",
+                beta_digest=DIGEST,
+            )
+
+    def test_wrong_image_fails(self) -> None:
+        compat = compatibility()
+        compat["image"] = "ghcr.io/example/other"
+        with self.assertRaisesRegex(release_gate.GateError, "image mismatch"):
             release_gate.validate_beta_release_record(
                 manifest=fixture("beta-release-manifest.json"),
                 compatibility=compat,
@@ -643,16 +665,15 @@ class StableGateTests(unittest.TestCase):
 
     def test_each_compatibility_beta_field_mismatch_fails(self) -> None:
         values = {
-            "channel": "stable",
-            "version": "0.1.0-beta.2",
-            "manifest_digest": "sha256:" + "a" * 64,
-            "source_commit": "f" * 40,
+            "promoted_from_beta": ("0.1.0-beta.2", "version"),
+            "manifest_digest": ("sha256:" + "a" * 64, "manifest_digest"),
+            "source_commit": ("f" * 40, "source_commit"),
         }
-        for field, value in values.items():
+        for field, (value, message) in values.items():
             with self.subTest(field=field):
                 compat = compatibility()
-                compat["qualification"]["promoted_from_beta"][field] = value
-                with self.assertRaisesRegex(release_gate.GateError, field):
+                compat["stable"][field] = value
+                with self.assertRaisesRegex(release_gate.GateError, message):
                     release_gate.validate_beta_release_record(
                         manifest=fixture("beta-release-manifest.json"),
                         compatibility=compat,

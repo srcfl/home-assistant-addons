@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Add-on SemVer, for example 0.1.0-beta.1
+        description: Beta app version from ftw-beta/config.yaml, for example 3.4.2-beta.4
         required: true
         type: string
 
@@ -34,10 +34,6 @@ jobs:
       core_version: ${{ steps.info.outputs.core_version }}
       core_digest: ${{ steps.info.outputs.core_digest }}
       core_commit: ${{ steps.info.outputs.core_commit }}
-      optimizer_ref: ${{ steps.info.outputs.optimizer_ref }}
-      optimizer_version: ${{ steps.info.outputs.optimizer_version }}
-      optimizer_digest: ${{ steps.info.outputs.optimizer_digest }}
-      optimizer_commit: ${{ steps.info.outputs.optimizer_commit }}
       driver_source: ${{ steps.info.outputs.driver_source }}
       driver_channel: ${{ steps.info.outputs.driver_channel }}
       driver_manifest: ${{ steps.info.outputs.driver_manifest }}
@@ -76,28 +72,23 @@ jobs:
           import yaml
 
           root = pathlib.Path.cwd()
-          config = yaml.safe_load((root / "ftw/config.yaml").read_text())
+          config = yaml.safe_load((root / "ftw-beta/config.yaml").read_text())
           compat = yaml.safe_load((root / "compatibility.yaml").read_text())
           version = config["version"]
           if version != os.environ["REQUESTED_VERSION"]:
-              raise SystemExit("workflow version does not match ftw/config.yaml")
-          core = compat["core"]
-          optimizer = compat["optimizer"]
+              raise SystemExit("workflow version does not match ftw-beta/config.yaml")
+          if version != compat["beta"]["version"]:
+              raise SystemExit("ftw-beta/config.yaml and compatibility.yaml versions differ")
+          core = compat["beta"]["core"]
           drivers = compat["drivers"]
           driver_baseline = drivers["tested_baseline"]
-          if compat["add_on"]["manifest_digest"] != "__PUBLISHED_BY_BETA_WORKFLOW__":
-              raise SystemExit("beta publisher marker is missing from compatibility.yaml")
           output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
           values = {
               "version": version,
-              "core_ref": f'{core["image"]}@{core["digest"]}',
+              "core_ref": f'{compat["core"]["image"]}@{core["digest"]}',
               "core_version": core["version"],
               "core_digest": core["digest"],
               "core_commit": core["commit"],
-              "optimizer_ref": f'{optimizer["image"]}@{optimizer["digest"]}',
-              "optimizer_version": optimizer["version"],
-              "optimizer_digest": optimizer["digest"],
-              "optimizer_commit": optimizer["commit"],
               "driver_source": drivers["source"],
               "driver_channel": drivers["channel"],
               "driver_manifest": drivers["manifest"],
@@ -147,12 +138,9 @@ jobs:
           arch: ${{ matrix.arch }}
           build-args: |
             FTW_CORE_FROM=${{ needs.prepare.outputs.core_ref }}
-            FTW_OPTIMIZER_FROM=${{ needs.prepare.outputs.optimizer_ref }}
             BUILD_SHA=${{ github.sha }}
             CORE_VERSION=${{ needs.prepare.outputs.core_version }}
             CORE_DIGEST=${{ needs.prepare.outputs.core_digest }}
-            OPTIMIZER_VERSION=${{ needs.prepare.outputs.optimizer_version }}
-            OPTIMIZER_DIGEST=${{ needs.prepare.outputs.optimizer_digest }}
           cache-gha-scope: ftw
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: ./ftw
@@ -244,9 +232,6 @@ jobs:
           CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
           CORE_DIGEST: ${{ needs.prepare.outputs.core_digest }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-          OPTIMIZER_VERSION: ${{ needs.prepare.outputs.optimizer_version }}
-          OPTIMIZER_DIGEST: ${{ needs.prepare.outputs.optimizer_digest }}
-          OPTIMIZER_COMMIT: ${{ needs.prepare.outputs.optimizer_commit }}
           DRIVER_SOURCE: ${{ needs.prepare.outputs.driver_source }}
           DRIVER_CHANNEL: ${{ needs.prepare.outputs.driver_channel }}
           DRIVER_MANIFEST: ${{ needs.prepare.outputs.driver_manifest }}
@@ -262,22 +247,16 @@ jobs:
             --arg core_version "${CORE_VERSION}" \
             --arg core_digest "${CORE_DIGEST}" \
             --arg core_commit "${CORE_COMMIT}" \
-            --arg optimizer_version "${OPTIMIZER_VERSION}" \
-            --arg optimizer_digest "${OPTIMIZER_DIGEST}" \
-            --arg optimizer_commit "${OPTIMIZER_COMMIT}" \
             --arg driver_source "${DRIVER_SOURCE}" \
             --arg driver_channel "${DRIVER_CHANNEL}" \
             --arg driver_manifest "${DRIVER_MANIFEST}" \
             --arg driver_commit "${DRIVER_COMMIT}" \
             --arg driver_manifest_sha256 "${DRIVER_MANIFEST_SHA256}" \
             --arg driver_key_id "${DRIVER_KEY_ID}" \
-            '{schema_version: 1, channel: "beta", version: $version,
+            '{schema_version: 2, channel: "beta", version: $version,
               image: $image, manifest_digest: $digest, source_commit: $source_commit,
               update_owner: "home_assistant_supervisor",
               core: {version: $core_version, digest: $core_digest, commit: $core_commit},
-              optimizer: {version: $optimizer_version, digest: $optimizer_digest, commit: $optimizer_commit,
-                name: "ftw-optimizer", protocol_version: 1, plan_schema_version: 1,
-                required_features: ["champion"], conditional_features: ["recourse", "multistage"]},
               drivers: {source: $driver_source, channel: $driver_channel, manifest: $driver_manifest,
                 tested_commit: $driver_commit, manifest_sha256: $driver_manifest_sha256,
                 key_id: $driver_key_id, update_policy: "independent"},
@@ -312,7 +291,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "FTW add-on v${VERSION}" \
-            --notes "Beta. Home Assistant OS and Supervisor qualification is still required before stable promotion." \
+            --notes "Beta built from the pinned FTW Core digest in release-manifest.json. Stable promotion re-tags this digest once the Home Assistant OS and Supervisor pilot is recorded." \
             --prerelease \
             --latest=false \
             release-manifest.json ftw*.spdx.json

@@ -33,3 +33,7 @@ and storage notes. The official package adapts that work as follows:
 - keeps `/data/drivers` apart from managed drivers.
 
 The FTW brand PNG comes unchanged from `srcfl/ftw/web/logo.png`.
+
+Since FTW retired the separate optimizer image, the official package builds
+from the Core image alone, mirrors the Core version, and publishes a beta and
+a stable app.

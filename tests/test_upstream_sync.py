@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 from unittest import mock
@@ -11,42 +12,94 @@ from scripts import upstream_sync, validate
 
 CORE_DIGEST = "sha256:" + "a" * 64
 CORE_COMMIT = "b" * 40
-OPTIMIZER_DIGEST = "sha256:" + "c" * 64
-OPTIMIZER_COMMIT = "d" * 40
+ADD_ON_DIGEST = "sha256:" + "d" * 64
+ADD_ON_COMMIT = "e" * 40
 
 
-def release(tag: str, *, draft: bool = False, body: str = "") -> dict:
+def release(tag: str, *, draft: bool = False, prerelease: bool | None = None) -> dict:
+    if prerelease is None:
+        prerelease = "-beta." in tag
     return {
         "tag_name": tag,
         "draft": draft,
+        "prerelease": prerelease,
         "html_url": f"https://github.com/srcfl/ftw/releases/tag/{tag}",
-        "body": body,
     }
 
 
-def core_pin(
-    version: str = "v1.11.0",
-    body: str = "Live pilot: https://github.com/srcfl/ftw/pull/700#issuecomment-1",
-) -> dict:
+def receipt(
+    tag: str,
+    *,
+    channel: str = "beta",
+    source_beta: str | None = None,
+    digest: str = CORE_DIGEST,
+    commit: str = CORE_COMMIT,
+) -> bytes:
+    value: dict = {
+        "schema": 1,
+        "commit": commit,
+        "stable_version": tag.removeprefix("v").split("-beta.")[0],
+        "images": {"core": {"digest": digest}, "updater": {"digest": "sha256:" + "f" * 64}},
+    }
+    if channel == "beta":
+        value["tag"] = tag
+    else:
+        value["stable_tag"] = tag
+        value["source_beta"] = source_beta or f"{tag}-beta.1"
+    return json.dumps(value).encode()
+
+
+def core_pin(version: str = "v3.5.0-beta.1", *, source_beta: str | None = None) -> dict:
     return {
         "version": version,
-        "digest": CORE_DIGEST,
         "commit": CORE_COMMIT,
+        "digest": CORE_DIGEST,
         "release_url": f"https://github.com/srcfl/ftw/releases/tag/{version}",
-        "build_url": "https://github.com/srcfl/ftw/actions/runs/1",
-        "body": body,
+        "source_beta": source_beta or version,
     }
 
 
-def optimizer_pin(version: str = "v1.4.0") -> dict:
+def baseline() -> dict:
     return {
-        "version": version,
-        "digest": OPTIMIZER_DIGEST,
-        "commit": OPTIMIZER_COMMIT,
-        "release_url": f"https://github.com/srcfl/ftw/releases/tag/optimizer-{version}",
-        "build_url": None,
-        "body": "",
+        "commit": "c" * 40,
+        "manifest_sha256": "1" * 64,
+        "key_id": "ftw-drivers-2026-01",
+        "evidence": {
+            "commit": "https://github.com/srcfl/device-drivers/commit/" + "c" * 40,
+            "release": "https://github.com/srcfl/device-drivers/releases/tag/drivers-stable",
+        },
     }
+
+
+def add_on_beta(version: str, *, core_digest: str = CORE_DIGEST) -> dict:
+    return {
+        "schema_version": 2,
+        "channel": "beta",
+        "version": version,
+        "image": "ghcr.io/srcfl/home-assistant-addons/ftw",
+        "manifest_digest": ADD_ON_DIGEST,
+        "source_commit": ADD_ON_COMMIT,
+        "core": {"version": f"v{version}", "digest": core_digest, "commit": CORE_COMMIT},
+    }
+
+
+def load_repository() -> tuple[dict, str, str]:
+    root = upstream_sync.ROOT
+    return (
+        upstream_sync.load_yaml(root / "compatibility.yaml"),
+        (root / "ftw-beta/config.yaml").read_text(encoding="utf-8"),
+        (root / "ftw-beta/CHANGELOG.md").read_text(encoding="utf-8"),
+    )
+
+
+def with_passed_pilot(compat: dict) -> dict:
+    compat = copy.deepcopy(compat)
+    compat["qualification"]["home_assistant_os_supervisor"].update(
+        status="passed",
+        add_on_version="3.4.2-beta.4",
+        evidence="https://github.com/srcfl/home-assistant-addons/issues/1",
+    )
+    return compat
 
 
 class VersionOrderingTests(unittest.TestCase):
@@ -68,85 +121,73 @@ class VersionOrderingTests(unittest.TestCase):
                 self.assertIsNone(upstream_sync.version_key(version))
 
 
+class AddOnVersionTests(unittest.TestCase):
+    def test_app_version_mirrors_the_core_version(self) -> None:
+        self.assertEqual(upstream_sync.add_on_version("v3.4.2-beta.4"), "3.4.2-beta.4")
+        self.assertEqual(upstream_sync.add_on_version("v3.4.2"), "3.4.2")
+
+    def test_invalid_core_version_fails(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "invalid"):
+            upstream_sync.add_on_version("3.4.2")
+
+
 class ReleaseSelectionTests(unittest.TestCase):
-    def test_highest_core_release_wins_and_drafts_are_ignored(self) -> None:
-        releases = [
+    def setUp(self) -> None:
+        self.releases = [
             release("v1.9.0"),
             release("v1.10.0-beta.1"),
             release("v1.12.0", draft=True),
             release("v1.11.0"),
-            release("optimizer-v9.9.9"),
+            release("v2.0.0-beta.3"),
+            release("v2.0.0-beta.2"),
             release("nightly-build"),
+            release("optimizer-v9.9.9"),
+            release("v3.0.0", prerelease=True),
+            release("v3.1.0-beta.1", prerelease=False),
         ]
-        best = upstream_sync.select_latest_release(releases, upstream_sync.CORE_TAG)
+
+    def test_beta_channel_takes_the_highest_prerelease_beta(self) -> None:
+        best = upstream_sync.select_latest_release(self.releases, "beta")
+        self.assertEqual(best["tag_name"], "v2.0.0-beta.3")
+
+    def test_stable_channel_takes_the_highest_final_release(self) -> None:
+        best = upstream_sync.select_latest_release(self.releases, "stable")
         self.assertEqual(best["tag_name"], "v1.11.0")
 
-    def test_optimizer_releases_use_their_own_line(self) -> None:
-        releases = [
-            release("v9.0.0"),
-            release("optimizer-v1.3.2-beta.1"),
-            release("optimizer-v1.4.0"),
-        ]
-        best = upstream_sync.select_latest_release(releases, upstream_sync.OPTIMIZER_TAG)
-        self.assertEqual(best["tag_name"], "optimizer-v1.4.0")
-
     def test_no_matching_release_returns_none(self) -> None:
-        self.assertIsNone(upstream_sync.select_latest_release([release("nightly")], upstream_sync.CORE_TAG))
+        self.assertIsNone(upstream_sync.select_latest_release([release("nightly")], "beta"))
+        self.assertIsNone(upstream_sync.select_latest_release([release("v1.0.0-beta.1")], "stable"))
 
 
-class NextVersionTests(unittest.TestCase):
-    def test_beta_bumps_the_beta_number(self) -> None:
-        self.assertEqual(
-            upstream_sync.next_add_on_version("0.1.0-beta.1", lambda tag: False),
-            "0.1.0-beta.2",
+class ReceiptTests(unittest.TestCase):
+    def test_beta_receipt_yields_the_core_digest(self) -> None:
+        parsed = upstream_sync.parse_receipt(
+            receipt("v3.5.0-beta.1"), channel="beta", tag="v3.5.0-beta.1", commit=CORE_COMMIT
         )
+        self.assertEqual(parsed, {"digest": CORE_DIGEST, "source_beta": "v3.5.0-beta.1"})
 
-    def test_existing_tags_are_skipped(self) -> None:
-        taken = {"ftw-v0.1.0-beta.2", "ftw-v0.1.0-beta.3"}
-        self.assertEqual(
-            upstream_sync.next_add_on_version("0.1.0-beta.1", lambda tag: tag in taken),
-            "0.1.0-beta.4",
+    def test_stable_receipt_names_its_source_beta(self) -> None:
+        parsed = upstream_sync.parse_receipt(
+            receipt("v3.4.2", channel="stable", source_beta="v3.4.2-beta.4"),
+            channel="stable",
+            tag="v3.4.2",
+            commit=CORE_COMMIT,
         )
+        self.assertEqual(parsed, {"digest": CORE_DIGEST, "source_beta": "v3.4.2-beta.4"})
 
-    def test_stable_starts_the_next_patch_beta_line(self) -> None:
-        self.assertEqual(
-            upstream_sync.next_add_on_version("0.1.0", lambda tag: False),
-            "0.1.1-beta.1",
-        )
-
-    def test_invalid_current_version_fails(self) -> None:
-        with self.assertRaisesRegex(upstream_sync.SyncError, "invalid"):
-            upstream_sync.next_add_on_version("0.1.0-rc.1", lambda tag: False)
-
-
-class LivePilotEvidenceTests(unittest.TestCase):
-    def test_labeled_live_pilot_link_wins(self) -> None:
-        body = (
-            "Notes with https://github.com/srcfl/ftw/pull/1 first.\n"
-            "Live pilot: https://github.com/srcfl/ftw/pull/623#issuecomment-5042911361.\n"
-        )
-        self.assertEqual(
-            upstream_sync.extract_live_pilot_evidence(body),
-            "https://github.com/srcfl/ftw/pull/623#issuecomment-5042911361",
-        )
-
-    def test_unlabeled_pilot_url_is_rejected(self) -> None:
-        body = "Qualified via https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite"
-        self.assertIsNone(upstream_sync.extract_live_pilot_evidence(body))
-
-    def test_labeled_action_run_is_accepted(self) -> None:
-        body = "Live pilot: https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite"
-        self.assertEqual(
-            upstream_sync.extract_live_pilot_evidence(body),
-            "https://github.com/srcfl/ftw/actions/runs/9?query=live-pilot-suite",
-        )
-
-    def test_labeled_release_page_is_not_pilot_evidence(self) -> None:
-        body = "Live pilot: https://github.com/srcfl/ftw/releases/tag/v1.11.0"
-        self.assertIsNone(upstream_sync.extract_live_pilot_evidence(body))
-
-    def test_release_without_pilot_evidence_is_rejected(self) -> None:
-        self.assertIsNone(upstream_sync.extract_live_pilot_evidence("no links here"))
+    def test_receipt_mismatches_fail(self) -> None:
+        cases = {
+            "different tag": (receipt("v3.5.0-beta.2"), "beta", "v3.5.0-beta.1", CORE_COMMIT),
+            "commit differs": (receipt("v3.5.0-beta.1"), "beta", "v3.5.0-beta.1", "f" * 40),
+            "different stable tag": (receipt("v3.5.0-beta.1"), "stable", "v3.5.0-beta.1", CORE_COMMIT),
+            "Core digest": (receipt("v3.5.0-beta.1", digest="oops"), "beta", "v3.5.0-beta.1", CORE_COMMIT),
+            "schema": (b'{"schema": 2}', "beta", "v3.5.0-beta.1", CORE_COMMIT),
+            "not valid JSON": (b"{", "beta", "v3.5.0-beta.1", CORE_COMMIT),
+        }
+        for message, (raw, channel, tag, commit) in cases.items():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(upstream_sync.SyncError, message):
+                    upstream_sync.parse_receipt(raw, channel=channel, tag=tag, commit=commit)
 
 
 class ReleaseImageContractTests(unittest.TestCase):
@@ -213,174 +254,330 @@ class ReleaseImageContractTests(unittest.TestCase):
                         version_label=label,
                     )
 
-    def test_optimizer_does_not_accept_the_core_base_label_contract(self) -> None:
-        with self.assertRaisesRegex(upstream_sync.SyncError, "version label"):
-            self.inspect(
-                image=upstream_sync.OPTIMIZER_IMAGE,
-                version="v1.4.0",
-                version_label="1.4.0",
-                commit=OPTIMIZER_COMMIT,
-                digest=OPTIMIZER_DIGEST,
-            )
-
-
-class FileRewriteTests(unittest.TestCase):
-    def test_config_version_is_replaced_in_place(self) -> None:
-        text = (
-            'name: FTW\nversion: "0.1.0-beta.1"\nslug: ftw\n'
-            'environment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.1"\n'
-        )
-        self.assertEqual(
-            upstream_sync.replace_config_version(text, "0.1.0-beta.2"),
-            'name: FTW\nversion: "0.1.0-beta.2"\nslug: ftw\n'
-            'environment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.2"\n',
-        )
-
-    def test_missing_version_line_fails(self) -> None:
-        with self.assertRaisesRegex(upstream_sync.SyncError, "version line"):
-            upstream_sync.replace_config_version(
-                'name: FTW\nenvironment:\n  FTW_BUNDLE_VERSION: "0.1.0-beta.1"\n',
-                "0.1.0-beta.2",
-            )
-
-    def test_missing_bundle_version_line_fails(self) -> None:
-        with self.assertRaisesRegex(upstream_sync.SyncError, "FTW_BUNDLE_VERSION line"):
-            upstream_sync.replace_config_version(
-                'name: FTW\nversion: "0.1.0-beta.1"\n',
-                "0.1.0-beta.2",
-            )
-
-    def test_changelog_entry_is_prepended_under_the_header(self) -> None:
-        text = "# Changelog\n\n## 0.1.0-beta.1\n\n- Old entry.\n"
-        updated = upstream_sync.prepend_changelog(text, "0.1.0-beta.2", core_pin(), None)
-        self.assertTrue(updated.startswith("# Changelog\n\n## 0.1.0-beta.2\n\n- Update Core to v1.11.0.\n"))
-        self.assertIn("## 0.1.0-beta.1", updated)
-
-
-class ComposeUpdatesTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.compat = upstream_sync.load_yaml(upstream_sync.ROOT / "compatibility.yaml")
-        self.config_text = (upstream_sync.ROOT / "ftw/config.yaml").read_text(encoding="utf-8")
-        self.changelog_text = (upstream_sync.ROOT / "ftw/CHANGELOG.md").read_text(encoding="utf-8")
-        self.new_version = upstream_sync.next_add_on_version(
-            str(self.compat["add_on"]["version"]), lambda tag: False
-        )
-
-    def compose(self, *, core: dict | None, optimizer: dict | None) -> tuple[dict, str, str, dict]:
-        return upstream_sync.compose_updates(
-            compat=self.compat,
-            config_text=self.config_text,
-            changelog_text=self.changelog_text,
-            core_pin=core,
-            optimizer_pin=optimizer,
-            new_version=self.new_version,
-            update_from=None,
-        )
-
-    def test_composed_bump_passes_beta_channel_validation(self) -> None:
-        body = "Live pilot: https://github.com/srcfl/ftw/pull/700#issuecomment-1"
-        compat, config_text, changelog, pilot = self.compose(
-            core=core_pin(body=body), optimizer=optimizer_pin()
-        )
-        config = yaml.safe_load(config_text)
-        original = validate.load_yaml
-        with mock.patch.object(
-            validate,
-            "load_yaml",
-            side_effect=lambda path: pilot if path.name == f"{self.new_version}.yaml" else original(path),
+    def test_wrong_revision_label_fails(self) -> None:
+        index = {
+            "manifests": [
+                {"digest": "sha256:" + "1" * 64, "platform": {"os": "linux", "architecture": "amd64"}},
+                {"digest": "sha256:" + "2" * 64, "platform": {"os": "linux", "architecture": "arm64"}},
+            ]
+        }
+        child = {
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.revision": "f" * 40,
+                    "org.opencontainers.image.version": "2.0.0",
+                }
+            }
+        }
+        with (
+            mock.patch.object(upstream_sync, "optional_image_digest", return_value=CORE_DIGEST),
+            mock.patch.object(
+                upstream_sync,
+                "command_output",
+                side_effect=(json.dumps(index), json.dumps(child), json.dumps(child)),
+            ),
         ):
-            validate.validate_common(config, compat)
-            validate.validate_channel("beta", config, compat)
-        self.assertIn(f"## {self.new_version}", changelog)
+            with self.assertRaisesRegex(upstream_sync.SyncError, "revision label"):
+                upstream_sync.inspect_release_image(upstream_sync.CORE_IMAGE, "v2.0.0", CORE_COMMIT)
 
-    def test_core_bump_without_labeled_live_pilot_fails_closed(self) -> None:
-        with self.assertRaisesRegex(upstream_sync.SyncError, "live-pilot evidence"):
-            self.compose(core=core_pin(body=""), optimizer=None)
-
-    def test_round_tripped_yaml_passes_the_same_validation(self) -> None:
-        compat, config_text, _, pilot = self.compose(core=core_pin(), optimizer=optimizer_pin())
-        compat = yaml.safe_load(upstream_sync.dump_yaml(compat))
-        pilot = yaml.safe_load(upstream_sync.dump_yaml(pilot))
-        config = yaml.safe_load(config_text)
-        original = validate.load_yaml
-        with mock.patch.object(
-            validate,
-            "load_yaml",
-            side_effect=lambda path: pilot if path.name == f"{self.new_version}.yaml" else original(path),
-        ):
-            validate.validate_common(config, compat)
-            validate.validate_channel("beta", config, compat)
-
-    def test_core_only_bump_keeps_the_optimizer_pins_and_evidence(self) -> None:
-        compat, _, _, _ = self.compose(core=core_pin(), optimizer=None)
-        self.assertEqual(compat["optimizer"]["version"], self.compat["optimizer"]["version"])
-        self.assertEqual(compat["optimizer"]["digest"], self.compat["optimizer"]["digest"])
-        self.assertEqual(
-            compat["qualification"]["upstream_gate"]["evidence"]["optimizer_release"],
-            self.compat["qualification"]["upstream_gate"]["evidence"]["optimizer_release"],
-        )
-        self.assertEqual(compat["core"]["version"], "v1.11.0")
-        self.assertEqual(compat["core"]["digest"], CORE_DIGEST)
-
-    def test_bump_resets_the_publisher_marker_and_promotion_record(self) -> None:
-        compat, _, _, _ = self.compose(core=core_pin(), optimizer=optimizer_pin())
-        self.assertEqual(compat["add_on"]["manifest_digest"], upstream_sync.PUBLISHER_MARKER)
-        self.assertEqual(
-            compat["qualification"]["promoted_from_beta"],
-            {"channel": None, "version": None, "manifest_digest": None, "source_commit": None},
-        )
-        self.assertEqual(
-            compat["qualification"]["home_assistant_os_supervisor"]["record"],
-            f"pilot/{self.new_version}.yaml",
-        )
-
-    def test_pilot_record_mirrors_the_new_pins(self) -> None:
-        compat, _, _, pilot = self.compose(core=core_pin(), optimizer=optimizer_pin())
-        self.assertEqual(pilot["add_on_version"], self.new_version)
-        self.assertEqual(pilot["candidate"]["core"]["digest"], compat["core"]["digest"])
-        self.assertEqual(pilot["candidate"]["optimizer"]["commit"], compat["optimizer"]["commit"])
-        self.assertEqual(pilot["checks"]["update"]["to_version"], self.new_version)
-        self.assertEqual(pilot["checks"]["rollback"]["from_version"], self.new_version)
+    def test_missing_image_is_retried_later(self) -> None:
+        with mock.patch.object(upstream_sync, "optional_image_digest", return_value=None):
+            with self.assertRaises(upstream_sync.ImageNotReady):
+                upstream_sync.inspect_release_image(upstream_sync.CORE_IMAGE, "v2.0.0", CORE_COMMIT)
 
 
 class ResolvePinTests(unittest.TestCase):
+    def resolve(self, tag: str, *, current: str, channel: str = "beta", registry_digest: str = CORE_DIGEST) -> dict | None:
+        with (
+            mock.patch.object(upstream_sync, "gh_api", return_value={"sha": CORE_COMMIT}),
+            mock.patch.object(
+                upstream_sync,
+                "download_release_asset",
+                return_value=receipt(tag, channel=channel, source_beta="v3.4.2-beta.4"),
+            ),
+            mock.patch.object(upstream_sync, "inspect_release_image", return_value=registry_digest),
+        ):
+            return upstream_sync.resolve_core_pin(
+                upstream="srcfl/ftw",
+                release=release(tag),
+                channel=channel,
+                current_version=current,
+            )
+
     def test_unchanged_version_is_skipped_without_network_calls(self) -> None:
         with mock.patch.object(upstream_sync, "gh_api", side_effect=AssertionError("no API call")):
             self.assertIsNone(
-                upstream_sync.resolve_pin(
+                upstream_sync.resolve_core_pin(
                     upstream="srcfl/ftw",
-                    release=release("v1.10.0-beta.1"),
-                    image=upstream_sync.CORE_IMAGE,
-                    current_version="v1.10.0-beta.1",
+                    release=release("v3.4.2-beta.4"),
+                    channel="beta",
+                    current_version="v3.4.2-beta.4",
                 )
             )
 
     def test_downgrades_are_skipped(self) -> None:
         with mock.patch.object(upstream_sync, "gh_api", side_effect=AssertionError("no API call")):
             self.assertIsNone(
-                upstream_sync.resolve_pin(
+                upstream_sync.resolve_core_pin(
                     upstream="srcfl/ftw",
-                    release=release("v1.9.0"),
-                    image=upstream_sync.CORE_IMAGE,
-                    current_version="v1.10.0-beta.1",
+                    release=release("v3.4.2-beta.3"),
+                    channel="beta",
+                    current_version="v3.4.2-beta.4",
                 )
             )
 
-    def test_new_release_pins_the_verified_digest_and_commit(self) -> None:
-        with (
-            mock.patch.object(upstream_sync, "gh_api", return_value={"sha": CORE_COMMIT}),
-            mock.patch.object(upstream_sync, "inspect_release_image", return_value=CORE_DIGEST),
-            mock.patch.object(upstream_sync, "discover_build_run", return_value=None),
-        ):
-            pin = upstream_sync.resolve_pin(
-                upstream="srcfl/ftw",
-                release=release("v1.11.0"),
-                image=upstream_sync.CORE_IMAGE,
-                current_version="v1.10.0-beta.1",
-            )
-        self.assertEqual(pin["version"], "v1.11.0")
+    def test_new_release_pins_the_receipt_verified_digest(self) -> None:
+        pin = self.resolve("v3.5.0-beta.1", current="v3.4.2-beta.4")
+        self.assertEqual(pin["version"], "v3.5.0-beta.1")
         self.assertEqual(pin["digest"], CORE_DIGEST)
         self.assertEqual(pin["commit"], CORE_COMMIT)
+        self.assertEqual(pin["source_beta"], "v3.5.0-beta.1")
+
+    def test_empty_current_version_accepts_the_first_stable(self) -> None:
+        pin = self.resolve("v3.4.2", current="", channel="stable")
+        self.assertEqual(pin["version"], "v3.4.2")
+        self.assertEqual(pin["source_beta"], "v3.4.2-beta.4")
+
+    def test_registry_digest_must_match_the_receipt(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "release receipt"):
+            self.resolve("v3.5.0-beta.1", current="v3.4.2-beta.4", registry_digest="sha256:" + "9" * 64)
+
+    def test_missing_receipt_is_retried_later(self) -> None:
+        with (
+            mock.patch.object(upstream_sync, "gh_api", return_value={"sha": CORE_COMMIT}),
+            mock.patch.object(
+                upstream_sync,
+                "download_release_asset",
+                side_effect=upstream_sync.ImageNotReady("no receipt yet"),
+            ),
+        ):
+            with self.assertRaises(upstream_sync.ImageNotReady):
+                upstream_sync.resolve_core_pin(
+                    upstream="srcfl/ftw",
+                    release=release("v3.5.0-beta.1"),
+                    channel="beta",
+                    current_version="v3.4.2-beta.4",
+                )
+
+
+class FileRewriteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.compat, self.beta_text, _ = load_repository()
+
+    def test_config_version_lines_are_replaced_in_place(self) -> None:
+        updated = upstream_sync.replace_config_version(self.beta_text, "3.5.0-beta.1", "v3.5.0-beta.1")
+        before = yaml.safe_load(self.beta_text)
+        after = yaml.safe_load(updated)
+        self.assertEqual(after["version"], "3.5.0-beta.1")
+        self.assertEqual(after["environment"]["FTW_BUNDLE_VERSION"], "3.5.0-beta.1")
+        self.assertEqual(after["environment"]["FTW_IMAGE_TAG"], "v3.5.0-beta.1")
+        for key in ("version",):
+            before.pop(key)
+            after.pop(key)
+        for key in ("FTW_BUNDLE_VERSION", "FTW_IMAGE_TAG"):
+            before["environment"].pop(key)
+            after["environment"].pop(key)
+        self.assertEqual(before, after)
+
+    def test_missing_lines_fail(self) -> None:
+        cases = {
+            "version": self.beta_text.replace('version: "3.4.2-beta.4"\n', "", 1),
+            "FTW_BUNDLE_VERSION": self.beta_text.replace('  FTW_BUNDLE_VERSION: "3.4.2-beta.4"\n', "", 1),
+            "FTW_IMAGE_TAG": self.beta_text.replace("  FTW_IMAGE_TAG: v3.4.2-beta.4\n", "", 1),
+        }
+        for name, text in cases.items():
+            with self.subTest(line=name):
+                with self.assertRaisesRegex(upstream_sync.SyncError, name):
+                    upstream_sync.replace_config_version(text, "3.5.0-beta.1", "v3.5.0-beta.1")
+
+    def test_stable_config_derives_from_the_beta_manifest(self) -> None:
+        rendered = upstream_sync.render_stable_config(self.beta_text, "3.4.2", "v3.4.2")
+        config = yaml.safe_load(rendered)
+        self.assertEqual(config["name"], "FTW")
+        self.assertEqual(config["slug"], "ftw")
+        self.assertEqual(config["url"], "https://github.com/srcfl/home-assistant-addons/tree/main/ftw")
+        self.assertEqual(config["version"], "3.4.2")
+        self.assertEqual(config["environment"]["FTW_IMAGE_TAG"], "v3.4.2")
+        self.assertNotIn("stage", config)
+        self.assertTrue(config["host_network"])
+
+    def test_changelog_entry_is_prepended_under_the_header(self) -> None:
+        text = "# Changelog\n\n## 1.0.0-beta.1\n\n- Old entry.\n"
+        updated = upstream_sync.prepend_changelog(text, "1.0.0-beta.2", ["New entry."])
+        self.assertTrue(updated.startswith("# Changelog\n\n## 1.0.0-beta.2\n\n- New entry.\n\n## 1.0.0-beta.1"))
+        self.assertEqual(
+            upstream_sync.prepend_changelog("# Changelog\n", "1.0.0", ["First."]),
+            "# Changelog\n\n## 1.0.0\n\n- First.\n",
+        )
+
+
+class ComposeUpdatesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.compat, self.beta_text, self.beta_changelog = load_repository()
+
+    def test_beta_update_passes_validation(self) -> None:
+        compat, config_text, changelog = upstream_sync.compose_beta_update(
+            compat=self.compat,
+            config_text=self.beta_text,
+            changelog_text=self.beta_changelog,
+            pin=core_pin("v3.5.0-beta.1"),
+            baseline=baseline(),
+        )
+        validate.validate_common(compat)
+        validate.validate_beta(compat)
+        validate.validate_add_on_config(yaml.safe_load(config_text), compat, "beta")
+        self.assertEqual(compat["beta"]["version"], "3.5.0-beta.1")
+        self.assertEqual(compat["drivers"]["tested_baseline"], baseline())
+        self.assertIn("## 3.5.0-beta.1", changelog)
+        self.assertEqual(self.compat["beta"]["version"], "3.4.2-beta.4")
+
+    def test_round_tripped_yaml_passes_the_same_validation(self) -> None:
+        compat, config_text, _ = upstream_sync.compose_beta_update(
+            compat=self.compat,
+            config_text=self.beta_text,
+            changelog_text=self.beta_changelog,
+            pin=core_pin("v3.5.0-beta.1"),
+            baseline=baseline(),
+        )
+        compat = yaml.safe_load(upstream_sync.dump_yaml(compat))
+        validate.validate_common(compat)
+        validate.validate_beta(compat)
+        validate.validate_add_on_config(yaml.safe_load(config_text), compat, "beta")
+
+    def test_stable_update_passes_validation(self) -> None:
+        compat, config_text, changelog = upstream_sync.compose_stable_update(
+            compat=with_passed_pilot(self.compat),
+            beta_config_text=self.beta_text,
+            changelog_text="# Changelog\n",
+            pin=core_pin("v3.4.2", source_beta="v3.4.2-beta.4"),
+            add_on_beta=add_on_beta("3.4.2-beta.4"),
+        )
+        validate.validate_common(compat)
+        validate.validate_stable(compat, required=True)
+        validate.validate_add_on_config(yaml.safe_load(config_text), compat, "stable")
+        self.assertEqual(compat["stable"]["promoted_from_beta"], "3.4.2-beta.4")
+        self.assertEqual(compat["stable"]["manifest_digest"], ADD_ON_DIGEST)
+        self.assertIn("## 3.4.2", changelog)
+
+    def test_stable_update_rejects_a_different_source_beta(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "promoted from"):
+            upstream_sync.compose_stable_update(
+                compat=with_passed_pilot(self.compat),
+                beta_config_text=self.beta_text,
+                changelog_text="# Changelog\n",
+                pin=core_pin("v3.4.2", source_beta="v3.4.2-beta.4"),
+                add_on_beta=add_on_beta("3.4.2-beta.3"),
+            )
+
+    def test_stable_update_rejects_a_different_core_digest(self) -> None:
+        with self.assertRaisesRegex(upstream_sync.SyncError, "built from Core"):
+            upstream_sync.compose_stable_update(
+                compat=with_passed_pilot(self.compat),
+                beta_config_text=self.beta_text,
+                changelog_text="# Changelog\n",
+                pin=core_pin("v3.4.2", source_beta="v3.4.2-beta.4"),
+                add_on_beta=add_on_beta("3.4.2-beta.4", core_digest="sha256:" + "9" * 64),
+            )
+
+
+class PlanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.compat, self.beta_text, self.beta_changelog = load_repository()
+        self.releases = [
+            release("v3.5.0-beta.1"),
+            release("v3.4.2"),
+            release("v9.0.0", draft=True),
+        ]
+
+    def plan(self, **overrides: object) -> dict:
+        kwargs: dict = {
+            "repository": "srcfl/home-assistant-addons",
+            "upstream": "srcfl/ftw",
+            "compat": self.compat,
+            "beta_config_text": self.beta_text,
+            "beta_changelog_text": self.beta_changelog,
+            "stable_changelog_text": "# Changelog\n",
+            "releases": self.releases,
+        }
+        kwargs.update(overrides)
+        return upstream_sync.plan(**kwargs)
+
+    def test_blocked_pilot_pins_only_the_beta(self) -> None:
+        def resolve(*, upstream: str, release: dict, channel: str, current_version: str) -> dict:
+            self.assertEqual(channel, "beta")
+            self.assertEqual(current_version, "v3.4.2-beta.4")
+            return core_pin("v3.5.0-beta.1")
+
+        with (
+            mock.patch.object(upstream_sync, "resolve_core_pin", side_effect=resolve),
+            mock.patch.object(upstream_sync, "current_driver_baseline", return_value=baseline()),
+        ):
+            planned = self.plan()
+        self.assertEqual(planned["changed"], ["beta"])
+        self.assertEqual(planned["compat"]["beta"]["version"], "3.5.0-beta.1")
+        self.assertEqual(set(planned["files"]), {"ftw-beta/config.yaml", "ftw-beta/CHANGELOG.md"})
+
+    def test_passed_pilot_waits_for_the_app_beta(self) -> None:
+        def resolve(*, upstream: str, release: dict, channel: str, current_version: str) -> dict | None:
+            if channel == "beta":
+                return None
+            return core_pin("v3.4.2", source_beta="v3.4.2-beta.4")
+
+        with (
+            mock.patch.object(upstream_sync, "resolve_core_pin", side_effect=resolve),
+            mock.patch.object(upstream_sync, "add_on_beta_release", return_value=None),
+        ):
+            planned = self.plan(compat=with_passed_pilot(self.compat))
+        self.assertEqual(planned["changed"], [])
+        self.assertIsNone(planned["compat"]["stable"]["version"])
+
+    def test_passed_pilot_promotes_the_matching_app_beta(self) -> None:
+        def resolve(*, upstream: str, release: dict, channel: str, current_version: str) -> dict | None:
+            if channel == "beta":
+                return None
+            self.assertEqual(current_version, "")
+            return core_pin("v3.4.2", source_beta="v3.4.2-beta.4")
+
+        with (
+            mock.patch.object(upstream_sync, "resolve_core_pin", side_effect=resolve),
+            mock.patch.object(upstream_sync, "add_on_beta_release", return_value=add_on_beta("3.4.2-beta.4")),
+        ):
+            planned = self.plan(compat=with_passed_pilot(self.compat))
+        self.assertEqual(planned["changed"], ["stable"])
+        self.assertEqual(planned["compat"]["stable"]["version"], "3.4.2")
+        self.assertEqual(set(planned["files"]), {"ftw/config.yaml", "ftw/CHANGELOG.md"})
+        validate.validate_stable(planned["compat"], required=True)
+        validate.validate_add_on_config(yaml.safe_load(planned["files"]["ftw/config.yaml"]), planned["compat"], "stable")
+
+    def test_beta_and_stable_can_land_in_one_run(self) -> None:
+        def resolve(*, upstream: str, release: dict, channel: str, current_version: str) -> dict:
+            if channel == "beta":
+                return core_pin("v3.5.0-beta.1")
+            return core_pin("v3.4.2", source_beta="v3.4.2-beta.4")
+
+        with (
+            mock.patch.object(upstream_sync, "resolve_core_pin", side_effect=resolve),
+            mock.patch.object(upstream_sync, "current_driver_baseline", return_value=baseline()),
+            mock.patch.object(upstream_sync, "add_on_beta_release", return_value=add_on_beta("3.4.2-beta.4")),
+        ):
+            planned = self.plan(compat=with_passed_pilot(self.compat))
+        self.assertEqual(planned["changed"], ["beta", "stable"])
+        validate.validate_common(planned["compat"])
+        validate.validate_beta(planned["compat"])
+        validate.validate_stable(planned["compat"], required=True)
+
+    def test_unready_upstream_beta_is_retried_later(self) -> None:
+        with mock.patch.object(
+            upstream_sync, "resolve_core_pin", side_effect=upstream_sync.ImageNotReady("not yet")
+        ):
+            planned = self.plan()
+        self.assertEqual(planned["changed"], [])
+
+    def test_nothing_new_changes_nothing(self) -> None:
+        with mock.patch.object(upstream_sync, "resolve_core_pin", return_value=None):
+            planned = self.plan(compat=with_passed_pilot(self.compat))
+        self.assertEqual(planned["changed"], [])
+        self.assertEqual(planned["files"], {})
 
 
 if __name__ == "__main__":

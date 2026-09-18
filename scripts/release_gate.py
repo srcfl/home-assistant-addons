@@ -51,10 +51,10 @@ RESUME_JOB_RESULTS = {
 }
 RESUME_CRITICAL_PATHS = (
     "compatibility.yaml",
-    "ftw/config.yaml",
+    "ftw-beta/config.yaml",
     "ftw/Dockerfile",
     "ftw/run.sh",
-    "ftw/healthcheck.py",
+    "ftw/healthcheck.sh",
 )
 ADD_ON_ARCHITECTURES = {"amd64": "amd64", "aarch64": "arm64"}
 
@@ -176,17 +176,33 @@ def validate_signed_driver_manifest(
     return payload
 
 
-def verify_current_driver_baseline(drivers: dict[str, Any]) -> None:
+def verify_current_driver_manifest(drivers: dict[str, Any]) -> str:
+    """Require the live stable driver manifest to be signed by the recorded key.
+
+    The sync records the manifest it saw at pin time as `tested_baseline`. The
+    channel keeps moving on its own, so a newer manifest at publish time is
+    reported, not refused; only integrity is a gate.
+    """
     baseline = drivers.get("tested_baseline")
     require(isinstance(baseline, dict), "tested driver baseline is missing")
     require(baseline.get("key_id") == DRIVER_KEY_ID, "tested driver key id mismatch")
     raw = download_driver_manifest(str(drivers.get("manifest", "")))
+    try:
+        envelope = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GateError(f"driver manifest is not valid JSON: {exc}") from exc
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    commit = str(payload.get("commit", "")) if isinstance(payload, dict) else ""
+    require(COMMIT.fullmatch(commit) is not None, "driver manifest payload lacks a source commit")
     validate_signed_driver_manifest(
         raw,
-        expected_sha256=str(baseline.get("manifest_sha256", "")),
-        expected_commit=str(baseline.get("commit", "")),
+        expected_sha256=hashlib.sha256(raw).hexdigest(),
+        expected_commit=commit,
         expected_key_id=str(baseline.get("key_id", "")),
     )
+    if commit != str(baseline.get("commit", "")):
+        print(f"::notice::stable driver manifest moved to {commit} since the pin recorded {baseline.get('commit')}")
+    return commit
 
 
 def validate_beta_target_state(*, git_tag_exists: bool, release_exists: bool, image_digest: str | None) -> None:
@@ -447,27 +463,24 @@ def validate_resume_source(source_commit: str, version: str) -> dict[str, Any]:
         "source compatibility.yaml",
     )
     source_config = parse_yaml(
-        command_output(["git", "show", f"{source_commit}:ftw/config.yaml"]),
-        "source ftw/config.yaml",
+        command_output(["git", "show", f"{source_commit}:ftw-beta/config.yaml"]),
+        "source ftw-beta/config.yaml",
     )
     require(source_config.get("version") == version, "source app version mismatch")
     require(
-        source_compatibility.get("add_on", {}).get("version") == version,
+        source_compatibility.get("beta", {}).get("version") == version,
         "source compatibility version mismatch",
     )
 
     current_compatibility = load_yaml(ROOT / "compatibility.yaml")
-    current_config = load_yaml(ROOT / "ftw/config.yaml")
+    current_config = load_yaml(ROOT / "ftw-beta/config.yaml")
     require(current_config == source_config, "current config.yaml differs from source commit")
     require(
         current_compatibility == source_compatibility,
         "current compatibility.yaml differs from source commit",
     )
 
-    record = source_compatibility.get("qualification", {}).get("home_assistant_os_supervisor", {}).get("record")
-    require(isinstance(record, str) and record.startswith("pilot/"), "source pilot record path is invalid")
-    critical_paths = (*RESUME_CRITICAL_PATHS, record)
-    for path in critical_paths:
+    for path in RESUME_CRITICAL_PATHS:
         result = run(["git", "diff", "--quiet", source_commit, "--", path])
         if result.returncode == 1:
             raise GateError(f"release-critical file differs from source commit: {path}")
@@ -552,19 +565,15 @@ def validate_add_on_platforms(
     platform_images: dict[str, dict[str, Any]],
     expected_version: str,
     expected_commit: str,
-    compatibility: dict[str, Any],
+    core_pin: dict[str, Any],
 ) -> dict[str, str]:
     descriptors = runtime_descriptors(index, "add-on image")
-    core = compatibility["core"]
-    optimizer = compatibility["optimizer"]
     expected_common = {
         "io.hass.version": expected_version,
         "org.opencontainers.image.version": expected_version,
         "org.opencontainers.image.revision": expected_commit,
-        "com.sourceful.ftw.core.version": str(core["version"]),
-        "com.sourceful.ftw.core.digest": str(core["digest"]),
-        "com.sourceful.ftw.optimizer.version": str(optimizer["version"]),
-        "com.sourceful.ftw.optimizer.digest": str(optimizer["digest"]),
+        "com.sourceful.ftw.core.version": str(core_pin["version"]),
+        "com.sourceful.ftw.core.digest": str(core_pin["digest"]),
         "com.sourceful.ftw.update-owner": "home_assistant_supervisor",
     }
     result: dict[str, str] = {}
@@ -609,7 +618,7 @@ def inspect_add_on_image(
     digest: str,
     version: str,
     source_commit: str,
-    compatibility: dict[str, Any],
+    core_pin: dict[str, Any],
 ) -> dict[str, str]:
     require(DIGEST.fullmatch(digest) is not None, "add-on resume digest is invalid")
     reference = f"{image}@{digest}"
@@ -644,7 +653,7 @@ def inspect_add_on_image(
         platform_images=platform_images,
         expected_version=version,
         expected_commit=source_commit,
-        compatibility=compatibility,
+        core_pin=core_pin,
     )
     registry_prefix, image_name = image.rsplit("/", 1)
     outputs: dict[str, str] = {"image": image, **{f"{key}_platform_digest": value for key, value in platform_digests.items()}}
@@ -685,13 +694,13 @@ def validate_beta_release_record(
     beta_version: str,
     beta_digest: str,
 ) -> tuple[str, str]:
-    promoted = compatibility.get("qualification", {}).get("promoted_from_beta", {})
-    require(isinstance(promoted, dict), "compatibility promoted beta record is missing")
+    stable = compatibility.get("stable")
+    require(isinstance(stable, dict), "compatibility stable record is missing")
     expected = {
-        "channel": promoted.get("channel"),
-        "version": promoted.get("version"),
-        "manifest_digest": promoted.get("manifest_digest"),
-        "source_commit": promoted.get("source_commit"),
+        "channel": "beta",
+        "version": stable.get("promoted_from_beta"),
+        "manifest_digest": stable.get("manifest_digest"),
+        "source_commit": stable.get("source_commit"),
     }
     requested = {
         "channel": "beta",
@@ -703,14 +712,10 @@ def validate_beta_release_record(
         require(expected[field] == value, f"compatibility promoted beta {field} mismatch")
         require(manifest.get(field) == value, f"beta release manifest {field} mismatch")
 
-    require(
-        compatibility.get("add_on", {}).get("manifest_digest") == beta_digest,
-        "stable compatibility digest differs from beta",
-    )
     source_commit = str(expected["source_commit"])
     require(COMMIT.fullmatch(source_commit) is not None, "promoted beta source commit is invalid")
     image = manifest.get("image")
-    require(isinstance(image, str) and image == compatibility.get("add_on", {}).get("image"), "beta image mismatch")
+    require(isinstance(image, str) and image == compatibility.get("image"), "beta image mismatch")
     return image, source_commit
 
 
@@ -852,18 +857,17 @@ def write_beta_release_manifest(
     source_commit: str,
 ) -> None:
     compatibility = load_yaml(ROOT / "compatibility.yaml")
-    require(compatibility.get("add_on", {}).get("version") == version, "release manifest version mismatch")
+    require(compatibility.get("beta", {}).get("version") == version, "release manifest version mismatch")
     require(DIGEST.fullmatch(digest) is not None, "release manifest digest is invalid")
     require(COMMIT.fullmatch(source_commit) is not None, "release manifest source commit is invalid")
-    core = compatibility["core"]
-    optimizer = compatibility["optimizer"]
+    core = compatibility["beta"]["core"]
     drivers = compatibility["drivers"]
     baseline = drivers["tested_baseline"]
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "channel": "beta",
         "version": version,
-        "image": compatibility["add_on"]["image"],
+        "image": compatibility["image"],
         "manifest_digest": digest,
         "source_commit": source_commit,
         "update_owner": "home_assistant_supervisor",
@@ -871,16 +875,6 @@ def write_beta_release_manifest(
             "version": core["version"],
             "digest": core["digest"],
             "commit": core["commit"],
-        },
-        "optimizer": {
-            "version": optimizer["version"],
-            "digest": optimizer["digest"],
-            "commit": optimizer["commit"],
-            "name": "ftw-optimizer",
-            "protocol_version": 1,
-            "plan_schema_version": 1,
-            "required_features": ["champion"],
-            "conditional_features": ["recourse", "multistage"],
         },
         "drivers": {
             "source": drivers["source"],
@@ -907,21 +901,17 @@ def write_output(name: str, value: str) -> None:
 
 def beta_prepare(args: argparse.Namespace) -> None:
     compat = load_yaml(ROOT / "compatibility.yaml")
-    beta_target_state(args.repository, compat["add_on"]["image"], args.version)
-    verify_current_driver_baseline(compat["drivers"])
-    for key, name in (("core", "Core"), ("optimizer", "Optimizer")):
-        item = compat[key]
-        inspect_pinned_image(name, item["image"], item["digest"], item["version"], item["commit"])
+    require(compat["beta"].get("version") == args.version, "beta workflow version differs from compatibility.yaml")
+    beta_target_state(args.repository, compat["image"], args.version)
+    verify_current_driver_manifest(compat["drivers"])
+    core = compat["beta"]["core"]
+    inspect_pinned_image("Core", compat["core"]["image"], core["digest"], core["version"], core["commit"])
 
 
 def beta_resume_prepare(args: argparse.Namespace) -> None:
-    config = load_yaml(ROOT / "ftw/config.yaml")
+    config = load_yaml(ROOT / "ftw-beta/config.yaml")
     require(config.get("version") == args.version, "resume version differs from config.yaml")
     compatibility = validate_resume_source(args.source_commit, args.version)
-    require(
-        compatibility.get("add_on", {}).get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__",
-        "resume publisher marker is missing",
-    )
     run_record, jobs, requested_version = source_run_evidence(args.repository, args.source_run_id)
     validate_resume_run(
         run_record=run_record,
@@ -930,18 +920,17 @@ def beta_resume_prepare(args: argparse.Namespace) -> None:
         expected_version=args.version,
         expected_source_commit=args.source_commit,
     )
-    image = str(compatibility["add_on"]["image"])
+    image = str(compatibility["image"])
     release_target_state(args.repository, image, args.version, args.digest)
-    verify_current_driver_baseline(compatibility["drivers"])
-    for key, name in (("core", "Core"), ("optimizer", "Optimizer")):
-        item = compatibility[key]
-        inspect_pinned_image(name, item["image"], item["digest"], item["version"], item["commit"])
+    verify_current_driver_manifest(compatibility["drivers"])
+    core = compatibility["beta"]["core"]
+    inspect_pinned_image("Core", compatibility["core"]["image"], core["digest"], core["version"], core["commit"])
     outputs = inspect_add_on_image(
         image=image,
         digest=args.digest,
         version=args.version,
         source_commit=args.source_commit,
-        compatibility=compatibility,
+        core_pin=core,
     )
     for name, value in outputs.items():
         write_output(name, value)
@@ -989,7 +978,7 @@ def beta_resume_recheck(args: argparse.Namespace) -> None:
     compatibility = load_yaml(ROOT / "compatibility.yaml")
     release_target_state(
         args.repository,
-        str(compatibility["add_on"]["image"]),
+        str(compatibility["image"]),
         args.version,
         args.digest,
     )
@@ -1067,7 +1056,7 @@ def beta_resume_final_state(args: argparse.Namespace) -> None:
         for name in expected:
             validate_same_json(load_json(args.evidence_dir / name), load_json(downloaded / name))
     compatibility = load_yaml(ROOT / "compatibility.yaml")
-    image = str(compatibility["add_on"]["image"])
+    image = str(compatibility["image"])
     require(optional_image_digest(f"{image}:{args.version}") == args.digest, "final version digest changed")
     require(optional_image_digest(f"{image}:beta") == args.digest, "final beta alias digest changed")
 
@@ -1081,6 +1070,7 @@ def stable_prepare(args: argparse.Namespace) -> None:
     config = load_yaml(ROOT / "ftw/config.yaml")
     compat = load_yaml(ROOT / "compatibility.yaml")
     require(config.get("version") == args.version, "stable workflow version differs from config.yaml")
+    require(compat["stable"].get("version") == args.version, "stable workflow version differs from compatibility.yaml")
     manifest = load_json(args.release_manifest)
     image, source_commit = validate_beta_release_record(
         manifest=manifest,

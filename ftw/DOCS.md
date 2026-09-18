@@ -1,9 +1,22 @@
 # FTW app guide
 
+## Channels
+
+| App | Follows | Version |
+|---|---|---|
+| **FTW** (this app) | every FTW stable `vX.Y.Z` | `X.Y.Z` |
+| **FTW (beta)** | every FTW beta `vX.Y.Z-beta.N` | `X.Y.Z-beta.N` |
+
+Both apps install the same image, `ghcr.io/srcfl/home-assistant-addons/ftw`,
+at different tags. A stable version is the exact beta image FTW promoted,
+re-tagged and never rebuilt. The two apps are separate Home Assistant apps with
+separate `/data`; moving between them means restoring a backup into the other
+app by hand, because Supervisor cannot restore one app's backup into another.
+
 ## Before you install
 
-Install only a beta or stable version that has a GitHub release and signed
-image. A version in the source tree alone is not installable.
+Install only a version that has a GitHub release and signed image. A version in
+the source tree alone is not installable.
 
 The app supports Home Assistant OS and Supervised installs on `amd64` and
 `aarch64`. It uses host networking so FTW can reach devices on the local
@@ -90,27 +103,24 @@ configuration, SQLite state, history, managed driver cache, and user drivers.
 
 The app uses cold backups. Supervisor stops FTW before it copies `/data`.
 
-## Optimizer fallback
+## Planner
 
-Core is the main process. The Python Optimizer uses only the Unix socket at
-`/run/ftw-optimizer/optimizer.sock`. A socket, handshake, or solve error makes
-Core use its Go planner. It does not make the app unready.
-
-The app restarts the Optimizer after failure. The delay grows to 60 seconds and
-then stays capped, so the worker can return without a container restart.
+Core is the only process. It bundles the compiled Energyplan worker and falls
+back to its Go planner when the worker is unavailable; neither case makes the
+app unready. There is no separate optimizer container or socket.
 
 ## Update and rollback
 
 Home Assistant Supervisor owns app updates and rollback. FTW self-update is
 off and the FTW updater is not in this image.
 
-Because Core and the Optimizer ship together in one image, the FTW web
-interface reports the single bundled FTW version under Settings → System
-instead of per-container component versions with update buttons.
+The FTW web interface reports the single bundled FTW version under
+Settings → System instead of per-container component versions with update
+buttons.
 
-Before each update, take a Home Assistant backup. If a beta fails, restore the
-prior app version and its matching backup. Stable promotion reuses the exact
-beta manifest digest that passed the Home Assistant OS and Supervisor pilot.
+Before each update, take a Home Assistant backup. If an update fails, restore
+the prior app version and its matching backup. A stable version is the exact
+beta image FTW promoted, re-tagged and never rebuilt.
 
 ## Support
 

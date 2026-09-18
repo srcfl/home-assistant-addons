@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the repository, app manifest, and immutable release record."""
+"""Validate the repository, both app manifests and the compatibility record."""
 
 from __future__ import annotations
 
@@ -13,23 +13,19 @@ import yaml
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLACEHOLDER = re.compile(r"^__[A-Z0-9_]+__$")
+IMAGE = "ghcr.io/srcfl/home-assistant-addons/ftw"
+CORE_IMAGE = "ghcr.io/srcfl/ftw"
+REPOSITORY_URL = "https://github.com/srcfl/home-assistant-addons"
+CORE_RELEASES = "https://github.com/srcfl/ftw/releases/tag/"
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 BETA_SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$")
 CORE_SEMVER = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-beta\.[0-9]+)?$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-PILOT_CHECKS = {
-    "install",
-    "boot_readiness",
-    "persistence",
-    "optimizer_fallback",
-    "optimizer_recovery",
-    "update",
-    "rollback",
-    "artifact_match",
-    "active_solver",
+CHANNELS: dict[str, dict[str, Any]] = {
+    "beta": {"slug": "ftw-beta", "name": "FTW (beta)", "stage": "experimental", "version": BETA_SEMVER},
+    "stable": {"slug": "ftw", "name": "FTW", "stage": None, "version": SEMVER},
 }
 
 
@@ -50,8 +46,13 @@ def require(condition: bool, message: str) -> None:
         raise ValidationError(message)
 
 
-def is_placeholder(value: object) -> bool:
-    return isinstance(value, str) and bool(PLACEHOLDER.fullmatch(value))
+def add_on_directory(channel: str) -> pathlib.Path:
+    return ROOT / str(CHANNELS[channel]["slug"])
+
+
+def add_on_version(core_version: str) -> str:
+    require(CORE_SEMVER.fullmatch(str(core_version)) is not None, f"Core version is invalid: {core_version}")
+    return str(core_version)[1:]
 
 
 def validate_core_image_tag_contract(dockerfile: str) -> None:
@@ -65,59 +66,47 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
     require(argument.start() < image_tag.start(), "Dockerfile must declare CORE_VERSION before FTW_IMAGE_TAG")
 
 
-def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
+def validate_repository() -> None:
     repository = load_yaml(ROOT / "repository.yaml")
-    require(repository.get("name"), "repository.yaml needs name")
-    require(repository.get("url") == "https://github.com/srcfl/home-assistant-addons", "repository URL is wrong")
+    require(bool(repository.get("name")), "repository.yaml needs name")
+    require(repository.get("url") == REPOSITORY_URL, "repository URL is wrong")
+    for channel in CHANNELS:
+        require(not (add_on_directory(channel) / "build.yaml").exists(), "build.yaml is obsolete and must not exist")
+    dockerfile = ROOT / "ftw" / "Dockerfile"
+    require(dockerfile.is_file(), "ftw/Dockerfile is the shared build context and must exist")
+    validate_core_image_tag_contract(dockerfile.read_text(encoding="utf-8"))
+    require(not (ROOT / "ftw-beta" / "Dockerfile").exists(), "ftw-beta must not carry its own Dockerfile")
 
-    require(not (ROOT / "ftw" / "build.yaml").exists(), "build.yaml is obsolete and must not exist")
-    require(config.get("slug") == "ftw", "app slug must be ftw")
-    require(config.get("arch") == ["amd64", "aarch64"], "app must list amd64 and aarch64 in that order")
-    require(config.get("image") == "ghcr.io/srcfl/home-assistant-addons/ftw", "app image name is wrong")
-    require(config.get("host_network") is True, "FTW needs host networking for local device access")
-    require(config.get("backup") == "cold", "FTW backups must be cold")
-    require(config.get("stage", "stable") in ("experimental", "stable"), "app stage is invalid")
 
-    environment = config.get("environment")
-    require(isinstance(environment, dict), "app environment must be an object")
-    require(str(environment.get("FTW_SELFUPDATE_ENABLED")) == "0", "self-update must be explicitly off")
-    require(environment.get("FTW_OPTIMIZER_TRANSPORT") == "unix", "optimizer transport must be unix")
-    require(
-        environment.get("FTW_OPTIMIZER_SOCKET") == "/run/ftw-optimizer/optimizer.sock",
-        "optimizer socket is wrong",
-    )
-    require(
-        environment.get("FTW_BUNDLE_VERSION") == config.get("version"),
-        "FTW_BUNDLE_VERSION must match the add-on version",
-    )
+def validate_core_pin(core: Any, channel: str) -> None:
+    require(isinstance(core, dict), f"{channel} Core pin must be an object")
+    version = str(core.get("version", ""))
+    require(CORE_SEMVER.fullmatch(version) is not None, f"{channel} Core version must match vX.Y.Z or vX.Y.Z-beta.N")
+    if channel == "beta":
+        require("-beta." in version, "beta Core version must be a prerelease")
+    else:
+        require("-beta." not in version, "stable Core version must not be a prerelease")
+    require(DIGEST.fullmatch(str(core.get("digest", ""))) is not None, f"{channel} Core digest is invalid")
+    require(COMMIT.fullmatch(str(core.get("commit", ""))) is not None, f"{channel} Core commit is invalid")
+    require(core.get("release") == f"{CORE_RELEASES}{version}", f"{channel} Core release URL is wrong")
 
-    require(compat.get("schema_version") == 1, "compatibility schema_version must be 1")
-    app = compat.get("add_on")
-    require(isinstance(app, dict), "compatibility add_on must be an object")
-    require(app.get("version") == config.get("version"), "config and compatibility versions differ")
-    require(app.get("architectures") == config.get("arch"), "config and compatibility architectures differ")
-    require(app.get("image") == config.get("image"), "config and compatibility image names differ")
+
+def validate_common(compat: dict[str, Any]) -> None:
+    require(compat.get("schema_version") == 2, "compatibility schema_version must be 2")
+    require(compat.get("image") == IMAGE, "compatibility image name is wrong")
     require(compat.get("update_owner") == "home_assistant_supervisor", "Supervisor must own update")
     require("updater" not in compat, "compatibility must not define an FTW updater")
 
     core = compat.get("core")
     require(isinstance(core, dict), "compatibility core must be an object")
+    require(core.get("image") == CORE_IMAGE, "Core image name is wrong")
     require(core.get("mode") == "home_assistant_add_on", "Core must use add-on mode")
     require(core.get("self_update") is False, "Core self-update must be false")
-    validate_core_image_tag_contract((ROOT / "ftw" / "Dockerfile").read_text(encoding="utf-8"))
 
-    optimizer = compat.get("optimizer")
-    require(isinstance(optimizer, dict), "compatibility optimizer must be an object")
-    require(optimizer.get("name") == "ftw-optimizer", "optimizer handshake name is wrong")
-    require(optimizer.get("protocol_version") == 1, "optimizer protocol must be 1")
-    require(optimizer.get("plan_schema_version") == 1, "optimizer plan schema must be 1")
-    require(optimizer.get("transport") == "unix", "optimizer compatibility transport must be unix")
-    require(optimizer.get("socket") == "/run/ftw-optimizer/optimizer.sock", "optimizer compatibility socket is wrong")
-    require("champion" in optimizer.get("required_features", []), "optimizer must require champion")
-    require(
-        {"recourse", "multistage"}.issubset(set(optimizer.get("conditional_features", []))),
-        "optimizer must record conditional recourse and multistage features",
-    )
+    for channel, spec in CHANNELS.items():
+        block = compat.get(channel)
+        require(isinstance(block, dict), f"compatibility {channel} must be an object")
+        require(block.get("add_on") == spec["slug"], f"compatibility {channel} add_on must be {spec['slug']}")
 
     drivers = compat.get("drivers")
     require(isinstance(drivers, dict), "compatibility drivers must be an object")
@@ -131,41 +120,7 @@ def validate_common(config: dict[str, Any], compat: dict[str, Any]) -> None:
     require(drivers.get("independently_updateable") is True, "managed drivers must update independently")
     require(drivers.get("bundled_role") == "offline_recovery", "bundled drivers are only offline recovery")
     require(drivers.get("user_directory") == "/data/drivers", "user driver directory is wrong")
-
-
-def require_release_values(compat: dict[str, Any], *, require_app_digest: bool) -> None:
-    app = compat["add_on"]
-    core = compat["core"]
-    optimizer = compat["optimizer"]
-    values = {
-        "Core version": core.get("version"),
-        "Core digest": core.get("digest"),
-        "Core commit": core.get("commit"),
-        "Optimizer version": optimizer.get("version"),
-        "Optimizer digest": optimizer.get("digest"),
-        "Optimizer commit": optimizer.get("commit"),
-    }
-    for name, value in values.items():
-        require(not is_placeholder(value) and value not in (None, ""), f"{name} is still a placeholder")
-    require(
-        CORE_SEMVER.fullmatch(str(core["version"])) is not None,
-        "Core version must match vX.Y.Z or vX.Y.Z-beta.N",
-    )
-    if require_app_digest:
-        require(not is_placeholder(app.get("manifest_digest")), "add-on manifest digest is still a placeholder")
-        require(DIGEST.fullmatch(str(app["manifest_digest"])) is not None, "add-on manifest digest is invalid")
-    else:
-        require(
-            app.get("manifest_digest") == "__PUBLISHED_BY_BETA_WORKFLOW__"
-            or DIGEST.fullmatch(str(app.get("manifest_digest"))) is not None,
-            "beta add-on digest must be the publisher marker or a published digest",
-        )
-    require(DIGEST.fullmatch(str(core["digest"])) is not None, "Core digest is invalid")
-    require(COMMIT.fullmatch(str(core["commit"])) is not None, "Core commit is invalid")
-    require(DIGEST.fullmatch(str(optimizer["digest"])) is not None, "Optimizer digest is invalid")
-    require(COMMIT.fullmatch(str(optimizer["commit"])) is not None, "Optimizer commit is invalid")
-
-    baseline = compat["drivers"].get("tested_baseline")
+    baseline = drivers.get("tested_baseline")
     require(isinstance(baseline, dict), "tested driver baseline is missing")
     require(COMMIT.fullmatch(str(baseline.get("commit", ""))) is not None, "tested driver commit is invalid")
     require(
@@ -173,183 +128,125 @@ def require_release_values(compat: dict[str, Any], *, require_app_digest: bool) 
         "tested driver manifest SHA-256 is invalid",
     )
     require(baseline.get("key_id") == "ftw-drivers-2026-01", "tested driver key id is wrong")
-    require(baseline.get("evidence"), "tested driver baseline evidence is missing")
+    require(bool(baseline.get("evidence")), "tested driver baseline evidence is missing")
 
-
-def validate_pilot(
-    version: str,
-    compat: dict[str, Any],
-    *,
-    require_passed: bool = False,
-    expected_source_commit: str | None = None,
-    expected_manifest_digest: str | None = None,
-) -> None:
-    qualification = compat["qualification"]
-    ha_gate = qualification.get("home_assistant_os_supervisor", {})
-    record_name = f"pilot/{version}.yaml"
-    require(ha_gate.get("record") == record_name, "Home Assistant pilot record path is wrong")
-    record = load_yaml(ROOT / record_name)
-    require(record.get("schema_version") == 1, "pilot schema_version must be 1")
-    require(record.get("add_on_version") == version, "pilot add-on version differs")
-    require(record.get("status") in ("blocked", "passed"), "pilot status is invalid")
-
-    candidate = record.get("candidate")
-    require(isinstance(candidate, dict), "pilot candidate must be an object")
-    for name in ("core", "optimizer"):
-        expected = compat[name]
-        actual = candidate.get(name)
-        require(isinstance(actual, dict), f"pilot {name} candidate is missing")
-        for field in ("version", "commit", "digest"):
-            require(actual.get(field) == expected.get(field), f"pilot {name} {field} differs")
-    baseline = compat["drivers"]["tested_baseline"]
-    pilot_drivers = candidate.get("drivers")
-    require(isinstance(pilot_drivers, dict), "pilot driver candidate is missing")
-    require(pilot_drivers.get("channel") == compat["drivers"]["channel"], "pilot driver channel differs")
-    require(pilot_drivers.get("tested_commit") == baseline["commit"], "pilot driver commit differs")
-    require(
-        pilot_drivers.get("manifest_sha256") == baseline["manifest_sha256"],
-        "pilot driver manifest SHA-256 differs",
-    )
-    require(pilot_drivers.get("key_id") == baseline["key_id"], "pilot driver key id differs")
-
-    checks = record.get("checks")
-    require(isinstance(checks, dict), "pilot checks must be an object")
-    require(PILOT_CHECKS.issubset(checks), "pilot record lacks required checks")
-    for name in PILOT_CHECKS:
-        check = checks[name]
-        require(isinstance(check, dict), f"pilot check {name} must be an object")
-        require(check.get("expected"), f"pilot check {name} lacks an expected result")
-        require(check.get("status") in ("blocked", "passed"), f"pilot check {name} status is invalid")
-        if check["status"] == "passed":
-            require(check.get("evidence"), f"passed pilot check {name} lacks evidence")
-
-    update = checks["update"]
-    rollback = checks["rollback"]
-    for field in ("from_version", "from_manifest_digest", "to_version", "to_manifest_digest"):
-        require(field in update, f"pilot update lacks {field}")
-        require(field in rollback, f"pilot rollback lacks {field}")
-    require(update["to_version"] == version, "pilot update target version differs")
-    require(
-        update["to_manifest_digest"] == candidate.get("manifest_digest"),
-        "pilot update target digest differs",
-    )
-    require(rollback["from_version"] == version, "pilot rollback source version differs")
-    require(
-        rollback["from_manifest_digest"] == candidate.get("manifest_digest"),
-        "pilot rollback source digest differs",
-    )
-    require(rollback["to_version"] == update["from_version"], "pilot rollback target version differs")
-    require(
-        rollback["to_manifest_digest"] == update["from_manifest_digest"],
-        "pilot rollback target digest differs",
-    )
-    if update["status"] == "passed":
-        require(
-            BETA_SEMVER.fullmatch(str(update["from_version"])) is not None,
-            "passed pilot update lacks a prior beta version",
-        )
-        require(
-            DIGEST.fullmatch(str(update["from_manifest_digest"])) is not None,
-            "passed pilot update lacks a prior beta digest",
-        )
-        require(
-            DIGEST.fullmatch(str(update["to_manifest_digest"])) is not None,
-            "passed pilot update target is invalid",
-        )
-    if rollback["status"] == "passed":
-        require(rollback.get("backup_reference"), "passed pilot rollback lacks a matching backup reference")
-        require(
-            BETA_SEMVER.fullmatch(str(rollback["to_version"])) is not None,
-            "passed pilot rollback lacks a prior beta version",
-        )
-        require(
-            DIGEST.fullmatch(str(rollback["to_manifest_digest"])) is not None,
-            "passed pilot rollback lacks a prior beta digest",
-        )
-
-    gate_status = ha_gate.get("status")
-    require(gate_status in ("blocked", "passed"), "Home Assistant gate status is invalid")
-    if require_passed:
-        require(gate_status == "passed", "stable requires a passed Home Assistant gate")
-    if gate_status == "blocked":
-        require(record.get("status") == "blocked", "blocked Home Assistant gate needs a blocked pilot record")
-    else:
-        require(record.get("status") == "passed", "passed Home Assistant gate needs a passed pilot record")
-        require(ha_gate.get("evidence"), "passed Home Assistant gate lacks evidence")
-        require(COMMIT.fullmatch(str(candidate.get("source_commit", ""))) is not None, "pilot source commit is invalid")
-        require(DIGEST.fullmatch(str(candidate.get("manifest_digest", ""))) is not None, "pilot digest is invalid")
-        require(all(checks[name]["status"] == "passed" for name in PILOT_CHECKS), "passed pilot has blocked checks")
-        if expected_source_commit is not None:
-            require(candidate["source_commit"] == expected_source_commit, "pilot source commit differs from beta")
-        if expected_manifest_digest is not None:
-            require(candidate["manifest_digest"] == expected_manifest_digest, "pilot digest differs from beta")
-
-
-def validate_channel(channel: str, config: dict[str, Any], compat: dict[str, Any]) -> None:
-    version = str(config.get("version", ""))
-    if channel == "bootstrap":
-        require(version == "0.0.0-dev", "bootstrap config version must be 0.0.0-dev")
-        require(compat["add_on"].get("channel") == "bootstrap", "bootstrap compatibility channel is wrong")
-        require(config.get("stage") == "experimental", "bootstrap app stage must be experimental")
-        return
-
-    require_release_values(compat, require_app_digest=channel == "stable")
     qualification = compat.get("qualification")
     require(isinstance(qualification, dict), "qualification must be an object")
-    upstream_gate = qualification.get("upstream_gate", {})
-    require(upstream_gate.get("status") == "passed", "upstream gate has not passed")
-    upstream_evidence = upstream_gate.get("evidence")
-    require(isinstance(upstream_evidence, dict), "upstream gate evidence is missing")
+    pilot = qualification.get("home_assistant_os_supervisor")
+    require(isinstance(pilot, dict), "Home Assistant pilot record must be an object")
+    require(pilot.get("status") in ("blocked", "passed"), "Home Assistant pilot status is invalid")
+    require(pilot.get("checklist") == "pilot/README.md", "Home Assistant pilot checklist path is wrong")
+    if pilot["status"] == "passed":
+        require(
+            str(pilot.get("evidence", "")).startswith("https://"),
+            "passed Home Assistant pilot needs public evidence",
+        )
+        require(
+            BETA_SEMVER.fullmatch(str(pilot.get("add_on_version", ""))) is not None,
+            "passed Home Assistant pilot must name the beta app version it ran on",
+        )
+
+
+def validate_beta(compat: dict[str, Any]) -> None:
+    beta = compat["beta"]
+    validate_core_pin(beta.get("core"), "beta")
     require(
-        str(upstream_evidence.get("core_live_pilot", "")).startswith("https://github.com/srcfl/ftw/"),
-        "public Core live-pilot evidence is missing",
+        beta.get("version") == add_on_version(str(beta["core"]["version"])),
+        "beta app version must mirror the Core version",
     )
 
-    if channel == "beta":
-        require(BETA_SEMVER.fullmatch(version) is not None, "beta version must match X.Y.Z-beta.N")
-        require(compat["add_on"].get("channel") == "beta", "compatibility channel must be beta")
-        require(config.get("stage") == "experimental", "beta app stage must be experimental")
-        validate_pilot(version, compat)
+
+def validate_stable(compat: dict[str, Any], *, required: bool) -> None:
+    stable = compat["stable"]
+    if stable.get("version") is None:
+        require(not required, "stable channel has no promoted version")
+        for field in ("promoted_from_beta", "manifest_digest", "source_commit", "core"):
+            require(stable.get(field) is None, f"stable {field} must be null until the first promotion")
         return
-
-    require(SEMVER.fullmatch(version) is not None, "stable version must match X.Y.Z")
-    require(compat["add_on"].get("channel") == "stable", "compatibility channel must be stable")
-    require("stage" not in config, "stable must use Home Assistant's default stable stage")
-    ha_gate = qualification.get("home_assistant_os_supervisor", {})
-    require(ha_gate.get("status") == "passed", "Home Assistant OS and Supervisor pilot has not passed")
-    require(ha_gate.get("evidence"), "Home Assistant pilot evidence is missing")
-    promoted = qualification.get("promoted_from_beta", {})
-    require(promoted.get("channel") == "beta", "promoted release channel must be beta")
-    require(BETA_SEMVER.fullmatch(str(promoted.get("version", ""))) is not None, "promoted beta version is missing")
-    require(str(promoted["version"]).split("-beta.", 1)[0] == version, "stable and beta SemVer bases differ")
-    require(promoted.get("manifest_digest") == compat["add_on"]["manifest_digest"], "stable digest differs from beta")
-    require(COMMIT.fullmatch(str(promoted.get("source_commit", ""))) is not None, "promoted beta commit is missing")
-    validate_pilot(
-        str(promoted["version"]),
-        compat,
-        require_passed=True,
-        expected_source_commit=str(promoted["source_commit"]),
-        expected_manifest_digest=str(promoted["manifest_digest"]),
+    version = str(stable["version"])
+    require(SEMVER.fullmatch(version) is not None, "stable app version must match X.Y.Z")
+    promoted = str(stable.get("promoted_from_beta", ""))
+    require(BETA_SEMVER.fullmatch(promoted) is not None, "stable must name the beta it was promoted from")
+    require(promoted.split("-beta.", 1)[0] == version, "stable and promoted beta versions differ")
+    require(DIGEST.fullmatch(str(stable.get("manifest_digest", ""))) is not None, "stable manifest digest is invalid")
+    require(COMMIT.fullmatch(str(stable.get("source_commit", ""))) is not None, "stable source commit is invalid")
+    validate_core_pin(stable.get("core"), "stable")
+    require(add_on_version(str(stable["core"]["version"])) == version, "stable app version must mirror the Core version")
+    require(
+        compat["qualification"]["home_assistant_os_supervisor"].get("status") == "passed",
+        "stable requires a passed Home Assistant OS and Supervisor pilot",
     )
+
+
+def validate_add_on_config(config: dict[str, Any], compat: dict[str, Any], channel: str) -> None:
+    spec = CHANNELS[channel]
+    block = compat[channel]
+    slug = str(spec["slug"])
+    require(config.get("name") == spec["name"], f"{slug} name must be {spec['name']}")
+    require(config.get("slug") == slug, f"app slug must be {slug}")
+    require(config.get("url") == f"{REPOSITORY_URL}/tree/main/{slug}", f"{slug} url is wrong")
+    require(config.get("arch") == ["amd64", "aarch64"], f"{slug} must list amd64 and aarch64 in that order")
+    require(config.get("image") == IMAGE, f"{slug} image name is wrong")
+    require(config.get("host_network") is True, "FTW needs host networking for local device access")
+    require(config.get("backup") == "cold", "FTW backups must be cold")
+    require("init" not in config, "init must stay at the Supervisor default so Docker's init reaps Core")
+    if spec["stage"] is None:
+        require("stage" not in config, f"{slug} must use Home Assistant's default stable stage")
+    else:
+        require(config.get("stage") == spec["stage"], f"{slug} stage must be {spec['stage']}")
+
+    version = str(config.get("version", ""))
+    require(spec["version"].fullmatch(version) is not None, f"{slug} version format is wrong")
+    require(block.get("version") == version, f"{slug} config and compatibility versions differ")
+
+    environment = config.get("environment")
+    require(isinstance(environment, dict), f"{slug} environment must be an object")
+    require(str(environment.get("FTW_SELFUPDATE_ENABLED")) == "0", "self-update must be explicitly off")
+    require(environment.get("FTW_BUNDLE") == "home_assistant_addon", "FTW_BUNDLE must name the Home Assistant bundle")
+    require(environment.get("FTW_BUNDLE_VERSION") == version, "FTW_BUNDLE_VERSION must match the app version")
+    require(
+        environment.get("FTW_IMAGE_TAG") == block["core"]["version"],
+        "FTW_IMAGE_TAG must be the pinned Core release tag",
+    )
+
+
+def validate_channel(channel: str, compat: dict[str, Any]) -> None:
+    if channel == "beta":
+        validate_beta(compat)
+    else:
+        validate_stable(compat, required=True)
+    config = load_yaml(add_on_directory(channel) / "config.yaml")
+    validate_add_on_config(config, compat, channel)
+
+
+def validate_all(compat: dict[str, Any]) -> list[str]:
+    validate_channel("beta", compat)
+    stable_config = add_on_directory("stable") / "config.yaml"
+    if compat["stable"].get("version") is None:
+        validate_stable(compat, required=False)
+        require(not stable_config.exists(), "ftw/config.yaml must not exist before the first stable promotion")
+        return ["beta"]
+    validate_channel("stable", compat)
+    return ["beta", "stable"]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--channel", choices=("auto", "bootstrap", "beta", "stable"), default="auto")
+    parser.add_argument("--channel", choices=("auto", "beta", "stable"), default="auto")
     args = parser.parse_args()
     try:
-        config = load_yaml(ROOT / "ftw" / "config.yaml")
+        validate_repository()
         compat = load_yaml(ROOT / "compatibility.yaml")
-        channel = args.channel
-        if channel == "auto":
-            channel = str(compat.get("add_on", {}).get("channel", ""))
-            require(channel in ("bootstrap", "beta", "stable"), "compatibility channel is invalid")
-        validate_common(config, compat)
-        validate_channel(channel, config, compat)
+        validate_common(compat)
+        if args.channel == "auto":
+            channels = validate_all(compat)
+        else:
+            validate_channel(args.channel, compat)
+            channels = [args.channel]
     except (OSError, yaml.YAMLError, ValidationError) as error:
         print(f"validation failed: {error}", file=sys.stderr)
         return 1
-    print(f"repository validation passed for {channel}")
+    print(f"repository validation passed for {', '.join(channels)}")
     return 0
 
 

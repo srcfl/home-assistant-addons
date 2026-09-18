@@ -1,66 +1,42 @@
-schema_version: 1
-add_on:
-  version: 0.1.0-beta.1
-  channel: beta
-  image: ghcr.io/srcfl/home-assistant-addons/ftw
-  manifest_digest: __PUBLISHED_BY_BETA_WORKFLOW__
-  architectures:
-    - amd64
-    - aarch64
+schema_version: 2
+image: ghcr.io/srcfl/home-assistant-addons/ftw
 update_owner: home_assistant_supervisor
 core:
-  version: v1.10.0-beta.1
   image: ghcr.io/srcfl/ftw
-  digest: sha256:03f98ad123b9d2924f1a037cca56f5eef2fdd19a0ead834e0d563d216a011dd5
-  commit: e9adb3113513dcd449268096b0dd637f4753ed24
   mode: home_assistant_add_on
   self_update: false
-optimizer:
-  version: v1.3.2-beta.1
-  image: ghcr.io/srcfl/ftw-optimizer
-  digest: sha256:3e595e1c8a4d44ea065749a7533e271f26233702141c3615302919b4019e79dc
-  commit: 2bea09edb9a69522c233159bc2f5962db08c084c
-  name: ftw-optimizer
-  protocol_version: 1
-  plan_schema_version: 1
-  socket: /run/ftw-optimizer/optimizer.sock
-  transport: unix
-  required_features:
-    - champion
-  conditional_features:
-    - recourse
-    - multistage
+beta:
+  add_on: ftw-beta
+  version: 3.4.2-beta.4
+  core:
+    version: v3.4.2-beta.4
+    commit: fc1c7af9edb28f4b594b2462ecedea868c482289
+    digest: sha256:06ab3751d55527dc557c239307124ab9c131401bba83057b3cb4b52c0643864c
+    release: https://github.com/srcfl/ftw/releases/tag/v3.4.2-beta.4
+stable:
+  add_on: ftw
+  version: null
+  promoted_from_beta: null
+  manifest_digest: null
+  source_commit: null
+  core: null
 drivers:
   source: https://github.com/srcfl/device-drivers
   channel: stable
   manifest: https://github.com/srcfl/device-drivers/releases/download/drivers-stable/manifest.json
   independently_updateable: true
   tested_baseline:
-    commit: 2939543a2041a29566e6cf27a4eb5e4c69924de8
-    manifest_sha256: a1a4b029398325c5f0c9f79260a42cb1de28df8929426636160dd1a9f345fa19
+    commit: f18ceef626c57aac1cc70747243cbb42f62e9536
+    manifest_sha256: a7b2d595eb589a3b910db6999fd1628da4345a2dcc1ec0fd6282c54a6b3fba75
     key_id: ftw-drivers-2026-01
     evidence:
-      commit: https://github.com/srcfl/device-drivers/commit/2939543a2041a29566e6cf27a4eb5e4c69924de8
+      commit: https://github.com/srcfl/device-drivers/commit/f18ceef626c57aac1cc70747243cbb42f62e9536
       release: https://github.com/srcfl/device-drivers/releases/tag/drivers-stable
   bundled_role: offline_recovery
   user_directory: /data/drivers
 qualification:
-  upstream_gate:
-    status: passed
-    evidence:
-      core_release: https://github.com/srcfl/ftw/releases/tag/v1.10.0-beta.1
-      core_build: https://github.com/srcfl/ftw/actions/runs/29895148800
-      core_live_pilot: https://github.com/srcfl/ftw/pull/623#issuecomment-5042911361
-      optimizer_release: https://github.com/srcfl/ftw/releases/tag/optimizer-v1.3.2-beta.1
-      optimizer_build: https://github.com/srcfl/ftw/actions/runs/29893751793
-      drivers_commit: https://github.com/srcfl/device-drivers/commit/2939543a2041a29566e6cf27a4eb5e4c69924de8
-      drivers_release: https://github.com/srcfl/device-drivers/releases/tag/drivers-stable
   home_assistant_os_supervisor:
     status: blocked
+    add_on_version: null
     evidence: null
-    record: pilot/0.1.0-beta.1.yaml
-  promoted_from_beta:
-    channel: null
-    version: null
-    manifest_digest: null
-    source_commit: null
+    checklist: pilot/README.md

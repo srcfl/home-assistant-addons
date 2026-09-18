@@ -7,6 +7,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FINALIZE = (ROOT / ".github/workflows/finalize-beta.yml").read_text(encoding="utf-8")
 PUBLISH = (ROOT / ".github/workflows/release-beta.yml").read_text(encoding="utf-8")
+PROMOTE = (ROOT / ".github/workflows/promote-stable.yml").read_text(encoding="utf-8")
 
 
 class FinalizeWorkflowTests(unittest.TestCase):
@@ -69,12 +70,35 @@ class FinalizeWorkflowTests(unittest.TestCase):
             self.assertNotIn(value, FINALIZE)
 
 
-class PublishWorkflowRegressionTests(unittest.TestCase):
+class PublishWorkflowTests(unittest.TestCase):
     def test_evidence_job_logs_in_before_final_attestation(self) -> None:
         login = PUBLISH.rfind("uses: docker/login-action@v4")
         attest = PUBLISH.rfind("uses: actions/attest@v4")
         self.assertGreater(login, 0)
         self.assertGreater(attest, login)
+
+    def test_publish_reads_the_beta_app_manifest(self) -> None:
+        self.assertIn('root / "ftw-beta/config.yaml"', PUBLISH)
+        self.assertIn('compat["beta"]["core"]', PUBLISH)
+        self.assertIn("python scripts/validate.py --channel beta", PUBLISH)
+
+    def test_publish_builds_the_shared_context_from_core_alone(self) -> None:
+        self.assertIn("context: ./ftw", PUBLISH)
+        self.assertIn("FTW_CORE_FROM=${{ needs.prepare.outputs.core_ref }}", PUBLISH)
+        self.assertNotIn("optimizer", PUBLISH.lower())
+
+    def test_release_manifest_uses_schema_two(self) -> None:
+        self.assertIn("schema_version: 2", PUBLISH)
+
+
+class PromoteWorkflowTests(unittest.TestCase):
+    def test_promote_validates_the_stable_channel(self) -> None:
+        self.assertIn("python scripts/validate.py --channel stable", PROMOTE)
+
+    def test_promote_retags_without_a_build(self) -> None:
+        self.assertNotIn("build-image", PROMOTE)
+        self.assertIn("docker buildx imagetools create", PROMOTE)
+        self.assertIn('--tag "${IMAGE}:stable"', PROMOTE)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,11 @@
-name: FTW
-version: "0.1.0-beta.1"
-slug: ftw
-description: Local-first home energy control from Sourceful
-url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw
+name: FTW (beta)
+version: "3.4.2-beta.4"
+slug: ftw-beta
+description: Local-first home energy control from Sourceful, beta channel
+url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-beta
 arch:
   - amd64
   - aarch64
-init: false
 stage: experimental
 host_network: true
 ports:
@@ -18,8 +17,7 @@ backup: cold
 timeout: 60
 environment:
   FTW_SELFUPDATE_ENABLED: "0"
-  FTW_OPTIMIZER_TRANSPORT: unix
-  FTW_OPTIMIZER_SOCKET: /run/ftw-optimizer/optimizer.sock
   FTW_BUNDLE: home_assistant_addon
-  FTW_BUNDLE_VERSION: "0.1.0-beta.1"
+  FTW_BUNDLE_VERSION: "3.4.2-beta.4"
+  FTW_IMAGE_TAG: v3.4.2-beta.4
 image: ghcr.io/srcfl/home-assistant-addons/ftw

@@ -1,5 +1,11 @@
 name: Sync upstream FTW
 
+# Pins the newest FTW beta into ftw-beta and, once the Home Assistant pilot is
+# recorded, the newest FTW stable into ftw. Runs hourly and whenever srcfl/ftw
+# sends `repository_dispatch` type `ftw-release` at the end of a release
+# workflow. The event payload is informational: the script reads FTW's GitHub
+# releases and the registry, so a dispatch only makes the next check immediate.
+
 on:
   schedule:
     - cron: "17 * * * *"
@@ -20,7 +26,7 @@ env:
 
 jobs:
   sync:
-    name: Pin the latest upstream release
+    name: Pin the latest upstream releases
     if: github.repository == 'srcfl/home-assistant-addons'
     runs-on: ubuntu-24.04
     permissions:
@@ -29,6 +35,11 @@ jobs:
       packages: read
       pull-requests: write
     steps:
+      - name: Log the upstream release event
+        if: github.event_name == 'repository_dispatch'
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: echo "::notice::srcfl/ftw sent ftw-release: ${PAYLOAD}"
       - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
@@ -54,7 +65,7 @@ jobs:
           --pr-body "${RUNNER_TEMP}/pr-body.md"
       - name: Validate the updated repository
         if: steps.sync.outputs.changed == 'true'
-        run: python scripts/validate.py --channel beta
+        run: python scripts/validate.py
       - name: Run repository unit tests
         if: steps.sync.outputs.changed == 'true'
         run: python -m unittest discover -s tests -p 'test_*.py'
@@ -69,7 +80,7 @@ jobs:
           git config user.name "${BOT_NAME}"
           git config user.email "${BOT_EMAIL}"
           git checkout -B "${BRANCH}"
-          git add compatibility.yaml ftw/config.yaml ftw/CHANGELOG.md pilot
+          git add -A -- compatibility.yaml ftw ftw-beta
           git commit --signoff -m "${TITLE}"
           git push --force origin "HEAD:refs/heads/${BRANCH}"
           if ! gh pr view "${BRANCH}" --json url --jq .url >/dev/null 2>&1; then
@@ -116,8 +127,8 @@ jobs:
           test "$(gh pr view "${PR}" --json headRefOid --jq .headRefOid)" = "${HEAD_SHA}"
           test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)" = "${BASE_SHA}"
           gh pr merge "${PR}" --squash --delete-branch --match-head-commit "${HEAD_SHA}"
-      - name: Trigger beta publication
+      - name: Trigger publication
         if: steps.sync.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run auto-publish-beta.yml --ref main
+        run: gh workflow run auto-publish.yml --ref main

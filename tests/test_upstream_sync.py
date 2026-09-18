@@ -380,13 +380,15 @@ class FileRewriteTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_missing_lines_fail(self) -> None:
+        version = yaml.safe_load(self.beta_text)["version"]
         cases = {
-            "version": self.beta_text.replace('version: "3.4.2-beta.4"\n', "", 1),
-            "FTW_BUNDLE_VERSION": self.beta_text.replace('  FTW_BUNDLE_VERSION: "3.4.2-beta.4"\n', "", 1),
-            "FTW_IMAGE_TAG": self.beta_text.replace("  FTW_IMAGE_TAG: v3.4.2-beta.4\n", "", 1),
+            "version": self.beta_text.replace(f'version: "{version}"\n', "", 1),
+            "FTW_BUNDLE_VERSION": self.beta_text.replace(f'  FTW_BUNDLE_VERSION: "{version}"\n', "", 1),
+            "FTW_IMAGE_TAG": self.beta_text.replace(f"  FTW_IMAGE_TAG: v{version}\n", "", 1),
         }
         for name, text in cases.items():
             with self.subTest(line=name):
+                self.assertNotEqual(text, self.beta_text)
                 with self.assertRaisesRegex(upstream_sync.SyncError, name):
                     upstream_sync.replace_config_version(text, "3.5.0-beta.1", "v3.5.0-beta.1")
 
@@ -416,6 +418,7 @@ class ComposeUpdatesTests(unittest.TestCase):
         self.compat, self.beta_text, self.beta_changelog = load_repository()
 
     def test_beta_update_passes_validation(self) -> None:
+        before = copy.deepcopy(self.compat)
         compat, config_text, changelog = upstream_sync.compose_beta_update(
             compat=self.compat,
             config_text=self.beta_text,
@@ -429,7 +432,7 @@ class ComposeUpdatesTests(unittest.TestCase):
         self.assertEqual(compat["beta"]["version"], "3.5.0-beta.1")
         self.assertEqual(compat["drivers"]["tested_baseline"], baseline())
         self.assertIn("## 3.5.0-beta.1", changelog)
-        self.assertEqual(self.compat["beta"]["version"], "3.4.2-beta.4")
+        self.assertEqual(self.compat, before)
 
     def test_round_tripped_yaml_passes_the_same_validation(self) -> None:
         compat, config_text, _ = upstream_sync.compose_beta_update(
@@ -505,7 +508,7 @@ class PlanTests(unittest.TestCase):
     def test_blocked_pilot_pins_only_the_beta(self) -> None:
         def resolve(*, upstream: str, release: dict, channel: str, current_version: str) -> dict:
             self.assertEqual(channel, "beta")
-            self.assertEqual(current_version, "v3.4.2-beta.4")
+            self.assertEqual(current_version, self.compat["beta"]["core"]["version"])
             return core_pin("v3.5.0-beta.1")
 
         with (

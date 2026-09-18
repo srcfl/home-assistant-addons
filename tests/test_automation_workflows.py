@@ -3,10 +3,27 @@ from __future__ import annotations
 import pathlib
 import unittest
 
+import yaml
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SYNC = (ROOT / ".github/workflows/sync-upstream.yml").read_text(encoding="utf-8")
 AUTO_PUBLISH = (ROOT / ".github/workflows/auto-publish.yml").read_text(encoding="utf-8")
+
+
+class WorkflowSyntaxTests(unittest.TestCase):
+    """GitHub refuses a workflow file it cannot parse. The failed run has no jobs
+    and no log, and the hourly sync and the ftw-release dispatch both stop. The
+    other tests here read the files as text, so parse each one first."""
+
+    def test_every_workflow_file_is_valid_yaml(self) -> None:
+        workflows = sorted((ROOT / ".github/workflows").glob("*.yml"))
+        self.assertTrue(workflows)
+        for path in workflows:
+            with self.subTest(workflow=path.name):
+                document = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertIsInstance(document, dict)
+                self.assertIn("jobs", document)
 
 
 class SyncWorkflowTests(unittest.TestCase):

@@ -39,7 +39,8 @@ jobs:
         if: github.event_name == 'repository_dispatch'
         env:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
-        run: echo "::notice::srcfl/ftw sent ftw-release: ${PAYLOAD}"
+        run: |
+          echo "::notice::srcfl/ftw sent ftw-release: ${PAYLOAD}"
       - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0

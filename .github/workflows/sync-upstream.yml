@@ -106,7 +106,7 @@ jobs:
           run_id=""
           for _ in $(seq 1 24); do
             sleep 5
-            run_id="$(gh run list --workflow=check.yml --branch "${BRANCH}" \
+            run_id="$(gh run list --workflow=check.yml --branch "${BRANCH}" --event workflow_dispatch \
               --json databaseId,headSha \
               --jq "[.[] | select(.headSha == \"${head_sha}\")][0].databaseId // empty")"
             [ -n "${run_id}" ] && break

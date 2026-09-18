@@ -36,6 +36,12 @@ class SyncWorkflowTests(unittest.TestCase):
         self.assertIn("group: ftw-upstream-sync", SYNC)
         self.assertIn("cancel-in-progress: false", SYNC)
 
+    def test_sync_follows_the_check_run_it_dispatched(self) -> None:
+        # GitHub also opens a pull_request run for the bot's PR and holds it
+        # for maintainer approval. Following that one never finishes.
+        self.assertIn("gh workflow run check.yml --ref", SYNC)
+        self.assertIn('--branch "${BRANCH}" --event workflow_dispatch', SYNC)
+
     def test_sync_only_runs_in_the_canonical_repository(self) -> None:
         self.assertIn("if: github.repository == 'srcfl/home-assistant-addons'", SYNC)
 

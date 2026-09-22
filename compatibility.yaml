@@ -7,12 +7,12 @@ core:
   self_update: false
 beta:
   add_on: ftw-beta
-  version: 3.7.5-beta.1
+  version: 3.8.0-beta.1
   core:
-    version: v3.7.5-beta.1
-    commit: d06d79de8688ca565f27589435018be369ae08a7
-    digest: sha256:09a7266006acc326e40157381d05177390f32241ef43d0f6b8c84b04c20637cf
-    release: https://github.com/srcfl/ftw/releases/tag/v3.7.5-beta.1
+    version: v3.8.0-beta.1
+    commit: 58b31fb7ac60443efbafb1b8df20c971ae57af01
+    digest: sha256:9ffbc27d67313df5f0edd80e2ca3b0f73fade890338b226fdb548403325b6224
+    release: https://github.com/srcfl/ftw/releases/tag/v3.8.0-beta.1
 stable:
   add_on: ftw
   version: null

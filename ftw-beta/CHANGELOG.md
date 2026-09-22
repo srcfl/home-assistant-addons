@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.8.0-beta.1
+
+- Update Core to v3.8.0-beta.1 (`sha256:9ffbc27d67313df5f0edd80e2ca3b0f73fade890338b226fdb548403325b6224`).
+- Record the stable driver baseline `f18ceef626c5`.
+
 ## 3.7.5-beta.1
 
 - Update Core to v3.7.5-beta.1 (`sha256:09a7266006acc326e40157381d05177390f32241ef43d0f6b8c84b04c20637cf`).

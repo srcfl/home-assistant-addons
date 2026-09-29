@@ -1,5 +1,6 @@
 name: Publish beta
 
+# Retired app line. Manual runs fail before checkout or credentials.
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +42,11 @@ jobs:
       driver_manifest_sha256: ${{ steps.info.outputs.driver_manifest_sha256 }}
       driver_key_id: ${{ steps.info.outputs.driver_key_id }}
     steps:
+      - name: Refuse retired app publication
+        run: |
+          echo "::error::The 3.x app is retired. New FTW uses separate 0.x Linux packages; see README.md."
+          exit 1
+
       - uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false

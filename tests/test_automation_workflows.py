@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 import unittest
 
 import yaml
@@ -12,9 +13,7 @@ AUTO_PUBLISH = (ROOT / ".github/workflows/auto-publish.yml").read_text(encoding=
 
 
 class WorkflowSyntaxTests(unittest.TestCase):
-    """GitHub refuses a workflow file it cannot parse. The failed run has no jobs
-    and no log, and the hourly sync and the ftw-release dispatch both stop. The
-    other tests here read the files as text, so parse each one first."""
+    """Parse workflow files before checking their retirement and recovery rules."""
 
     def test_every_workflow_file_is_valid_yaml(self) -> None:
         workflows = sorted((ROOT / ".github/workflows").glob("*.yml"))
@@ -26,11 +25,40 @@ class WorkflowSyntaxTests(unittest.TestCase):
                 self.assertIn("jobs", document)
 
 
+class RetiredPublicationTests(unittest.TestCase):
+    def test_all_publication_entry_points_stop_before_checkout_or_writes(self) -> None:
+        for filename in (
+            "sync-upstream.yml", "auto-publish.yml", "release-beta.yml",
+            "promote-stable.yml", "finalize-beta.yml",
+        ):
+            with self.subTest(workflow=filename):
+                path = ROOT / ".github/workflows" / filename
+                document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+                self.assertEqual(set(document["on"]), {"workflow_dispatch"})
+                roots = 0
+                for job in document["jobs"].values():
+                    self.assertNotIn("always()", job.get("if", ""))
+                    self.assertNotIn("continue-on-error", job)
+                    if "needs" in job:
+                        continue
+                    roots += 1
+                    gate = job["steps"][0]
+                    self.assertEqual(gate["name"], "Refuse retired app publication")
+                    self.assertNotIn("if", gate)
+                    self.assertNotIn("continue-on-error", gate)
+                    result = subprocess.run(
+                        ["/bin/bash", "-c", gate["run"]],
+                        env={"PATH": "/nonexistent"}, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("app is retired", result.stdout)
+                self.assertGreater(roots, 0)
+
+
 class SyncWorkflowTests(unittest.TestCase):
-    def test_sync_watches_upstream_releases_and_the_clock(self) -> None:
-        self.assertIn("repository_dispatch:", SYNC)
-        self.assertIn("types: [ftw-release]", SYNC)
-        self.assertIn("schedule:", SYNC)
+    def test_sync_no_longer_watches_releases_or_the_clock(self) -> None:
+        document = yaml.load(SYNC, Loader=yaml.BaseLoader)
+        self.assertEqual(set(document["on"]), {"workflow_dispatch"})
 
     def test_sync_serializes_its_runs(self) -> None:
         self.assertIn("group: ftw-upstream-sync", SYNC)

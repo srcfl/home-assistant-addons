@@ -1,16 +1,9 @@
 name: Sync upstream FTW
 
-# Pins the newest FTW beta into ftw-beta and, once the Home Assistant pilot is
-# recorded, the newest FTW stable into ftw. Runs hourly and whenever srcfl/ftw
-# sends `repository_dispatch` type `ftw-release` at the end of a release
-# workflow. The event payload is informational: the script reads FTW's GitHub
-# releases and the registry, so a dispatch only makes the next check immediate.
+# Retired app line: no scheduled, push or upstream-event publication.
+# Manual runs fail before checkout, credentials, pin PRs or registry writes.
 
 on:
-  schedule:
-    - cron: "17 * * * *"
-  repository_dispatch:
-    types: [ftw-release]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +28,11 @@ jobs:
       packages: read
       pull-requests: write
     steps:
+      - name: Refuse retired app publication
+        run: |
+          echo "::error::The 3.x app is retired. New FTW uses separate 0.x Linux packages; see README.md."
+          exit 1
+
       - name: Log the upstream release event
         if: github.event_name == 'repository_dispatch'
         env:

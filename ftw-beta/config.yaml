@@ -1,7 +1,7 @@
 name: FTW (beta)
 version: "3.8.0-beta.1"
 slug: ftw-beta
-description: Local-first home energy control from Sourceful, beta channel
+description: Retired 3.x line, no more updates. Use new FTW 0.x on a separate Linux host.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-beta
 arch:
   - amd64

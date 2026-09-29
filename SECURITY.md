@@ -16,11 +16,14 @@ versions, impact, steps to reproduce, and any safe fix you know.
 
 ## Scope
 
-We support only versions listed in `compatibility.yaml`. Bootstrap entries and
-failed or pending pilots are not supported releases.
+The app's 3.x line is retired. Neither 2.x nor 3.x will receive further
+updates. `compatibility.yaml` records old builds; it is not a promise of
+continued fixes. Follow the [switch guide](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+to run new FTW on a separate Linux host. You can still report flaws through
+the private channels above.
 
 An image left in the registry by a failed publication workflow is not a
-supported beta. A supported beta needs a matching GitHub prerelease, immutable
+published beta. A published beta needs a matching GitHub prerelease, immutable
 digest, Cosign signature, SPDX SBOM, and verified GitHub and OCI attestations.
 
 The app grants no Supervisor API, Home Assistant API, Docker API, privileged,

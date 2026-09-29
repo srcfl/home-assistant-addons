@@ -1,34 +1,18 @@
-# FTW (beta) app guide
+# Existing FTW app: operation and recovery
 
-This app installs the FTW Core image of the newest FTW beta with a small
-Supervisor wrapper. Home Assistant Supervisor owns install, update, backup and
-rollback; FTW's own updater is not in the image.
+**This is the retired release line. 2.x and 3.x receive no more updates.**
+The app does not follow new 0.x. Do not install 3.x beta or change app channels
+to get current FTW. No new-line app has shipped; stable remains unpublished.
 
-## Channels
+Follow [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+to use a separate new native or Docker setup now. Keep a Home Assistant backup
+and old data. Stop the app's Core, Start on boot and Watchdog before the new
+host controls the equipment, then check again after reboot. Guided migration
+of settings and history is not ready; do not copy the app's data into new Core.
+The MQTT integration can connect Home Assistant to the new host.
 
-| App | Follows | Version |
-|---|---|---|
-| **FTW (beta)** (this app) | every FTW beta `vX.Y.Z-beta.N` | `X.Y.Z-beta.N` |
-| **FTW** | every FTW stable `vX.Y.Z` | `X.Y.Z` |
-
-Both apps install the same image, `ghcr.io/srcfl/home-assistant-addons/ftw`,
-at different tags. A stable version is the exact beta image FTW promoted,
-re-tagged and never rebuilt.
-
-The two apps are separate Home Assistant apps with separate `/data`. To move
-from beta to stable, take a backup of this app, install FTW, stop it, and copy
-the backup's data into the new app's data directory before starting it.
-Supervisor cannot restore one app's backup into another app by itself.
-
-## First start
-
-1. Start FTW (beta).
-2. Open its web interface on port 8080.
-3. Complete FTW setup.
-
-Until setup writes `/data/config.yaml`, the container health check tests the
-setup page. After that file exists, it requires valid JSON from Core's
-`/api/status` endpoint.
+The following sections describe an already installed app. Supervisor owns its
+backup and restore; FTW self-update is off. Its web page uses port 8080.
 
 ## Data and drivers
 
@@ -51,11 +35,12 @@ without extra setup on Home Assistant OS. See the
 [full FTW app guide](https://github.com/srcfl/home-assistant-addons/blob/main/ftw/DOCS.md)
 for what that depends on and how to read a failed lookup.
 
-## Update and rollback
+## Recovery
 
-Take a Home Assistant backup before each update. If a beta fails, restore the
-prior app version and its matching backup, then report the beta in the FTW
-repository.
+Take a Home Assistant backup before any recovery. Restore only the original
+compatible app version with its matching backup. Supervisor owns recovery;
+FTW's own updater is not present. There are no new 2.x or 3.x updates, and an
+old update notice is not a path to new 0.x.
 
 ## Support
 

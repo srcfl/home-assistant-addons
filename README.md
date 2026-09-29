@@ -1,44 +1,37 @@
 # Sourceful FTW for Home Assistant
 
-This is the official Home Assistant app repository for
-[FTW](https://github.com/srcfl/ftw).
+**FTW 2.x and 3.x will receive no further updates. All new releases use the
+new 0.x line. Do not install this repository's 3.x beta to get current FTW.**
 
-| App | Slug | Follows | Version |
-|---|---|---|---|
-| **FTW (beta)** | `ftw-beta` | every FTW beta `vX.Y.Z-beta.N` | `X.Y.Z-beta.N` |
-| **FTW** | `ftw` | every FTW stable `vX.Y.Z` | `X.Y.Z` |
+The existing app is on the retired 3.x line. It does not follow new 0.x
+releases, and no new-line Home Assistant app has shipped. The stable app has
+not been qualified or published.
 
-Both apps install `ghcr.io/srcfl/home-assistant-addons/ftw:<version>`: the
-pinned FTW Core image plus a small Supervisor wrapper. Core bundles the
-Energyplan worker and its Go planner fallback, so the app has one process and
-no separate optimizer. A stable version is the beta image FTW promoted,
-re-tagged and never rebuilt. FTW's updater is not present; Home Assistant
-Supervisor owns update and rollback.
+## Switch to current FTW
 
-## Install
+Follow [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+([Svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/update-sv.md)).
+Run the new native or Docker package on another 64-bit Linux host. You can
+set up the site now with separate data; guided transfer of old settings and
+history is not ready. Keep a Home Assistant backup and the old app's data.
+Stop old Core, Start on boot and Watchdog before new FTW controls the same
+equipment, and verify that it stays stopped after reboot.
 
-1. In Home Assistant, open **Settings → Apps → App store → Repositories**.
-2. Add `https://github.com/srcfl/home-assistant-addons`.
-3. Install **FTW (beta)** to follow betas, or **FTW** for stable once it is
-   published.
+Home Assistant can still use the
+[MQTT integration](https://github.com/srcfl/ftw/blob/master/docs/ha-integration.md)
+with FTW on that separate host. Keep a broker that the devices need running.
 
-The apps support `amd64` and `aarch64`. Supervisor downloads a pre-built,
-signed image; it does not build FTW on your host. Install only a version that
-has a matching GitHub release in this repository; an image left in the
-registry by a failed workflow is not a release.
+## Existing installations and recovery
 
-See the [app guide](ftw/DOCS.md), [compatibility](COMPATIBILITY.md),
-[releasing](RELEASING.md) and [support routes](SUPPORT.md).
+Supervisor owns the old app's stop, backup and restore operations; FTW's
+updater is not in the image. A source version or registry image alone is not
+a release. Use the original matching release and backup for recovery, never
+an old `beta` or `latest` alias as a way to move to new 0.x.
 
-## Release rules
-
-Releases follow FTW automatically: the sync workflow pins each new FTW beta
-into `ftw-beta` and, once a Home Assistant OS and Supervisor pilot is recorded,
-promotes the matching beta into `ftw` when FTW promotes. Every pin is verified
-against FTW's release receipt and the registry before anything is built.
-
-Stable stays blocked until the pilot in [pilot/README.md](pilot/README.md) is
-recorded in `compatibility.yaml`.
+See [the existing-app guide](ftw-beta/DOCS.md),
+[compatibility records](COMPATIBILITY.md), [retired release tooling](RELEASING.md)
+and [support routes](SUPPORT.md). Old images and records describe recovery
+material, not a recommendation for a new install.
 
 ## Credit
 

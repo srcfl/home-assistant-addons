@@ -1,18 +1,9 @@
 name: Auto publish
 
-# Dispatches Publish beta for a beta version without a tag and Promote stable
-# for a stable version without a tag. Runs after the sync merges a pin, on the
-# hour as a fallback, and by hand. It builds and publishes nothing itself.
+# Retired app line: no scheduled, push or upstream-event publication.
+# Manual runs fail before checkout, credentials, pin PRs or registry writes.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ftw/config.yaml
-      - ftw-beta/config.yaml
-      - compatibility.yaml
-  schedule:
-    - cron: "47 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +22,11 @@ jobs:
       actions: write
       contents: read
     steps:
+      - name: Refuse retired app publication
+        run: |
+          echo "::error::The 3.x app is retired. New FTW uses separate 0.x Linux packages; see README.md."
+          exit 1
+
       - uses: actions/checkout@v7.0.0
         with:
           ref: main

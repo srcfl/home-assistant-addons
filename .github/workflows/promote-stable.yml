@@ -1,5 +1,6 @@
 name: Promote stable
 
+# Retired app line. Manual runs fail before checkout or credentials.
 on:
   workflow_dispatch:
     inputs:
@@ -34,6 +35,11 @@ jobs:
       contents: write
       packages: write
     steps:
+      - name: Refuse retired app publication
+        run: |
+          echo "::error::The 3.x app is retired. New FTW uses separate 0.x Linux packages; see README.md."
+          exit 1
+
       - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0

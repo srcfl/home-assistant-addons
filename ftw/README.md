@@ -1,12 +1,13 @@
-# FTW
+# FTW — old release line
 
-FTW is Sourceful's local-first home energy controller. It connects energy
-devices, keeps local state, and applies safety checks before it sends commands.
+2.x and 3.x receive no further updates. This app does not follow new 0.x.
+Do not install the 3.x beta to get current FTW. No new-line app has shipped;
+the stable app remains unpublished.
 
-This is the stable app. It follows every FTW stable release and appears in the
-app store after the first promotion, which needs a recorded Home Assistant OS
-and Supervisor pilot. Until then install **FTW (beta)** from the same
-repository.
+Use [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+to run current FTW on a separate Linux host. Keep a backup of this app and
+stop its Core, Start on boot and Watchdog before the new host takes control.
+A new setup is available now; guided transfer of old data is not ready.
 
-See [the full app guide](DOCS.md) and the repository's
+For an existing installation, see [the app guide](DOCS.md) and the
 [compatibility record](../COMPATIBILITY.md).

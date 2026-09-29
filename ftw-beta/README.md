@@ -1,12 +1,13 @@
-# FTW (beta)
+# FTW (beta) — old release line
 
-FTW is Sourceful's local-first home energy controller. It connects energy
-devices, keeps local state, and applies safety checks before it sends commands.
+2.x and 3.x receive no further updates. This app does not follow new 0.x.
+Do not install the 3.x beta to get current FTW. No new-line app has shipped;
+the stable app remains unpublished.
 
-This app follows every FTW beta. Its version is the FTW Core version it runs,
-for example `3.4.2-beta.4` for Core `v3.4.2-beta.4`. Expect frequent updates
-and report findings in the [FTW repository](https://github.com/srcfl/ftw/issues),
-naming the beta.
+Use [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+to run current FTW on a separate Linux host. Keep a backup of this app and
+stop its Core, Start on boot and Watchdog before the new host takes control.
+A new setup is available now; guided transfer of old data is not ready.
 
-For the stable channel install **FTW** from the same repository once it is
-published. The two apps keep separate data; see [the app guide](DOCS.md).
+For an existing installation, see [the app guide](DOCS.md) and the
+[compatibility record](../COMPATIBILITY.md).

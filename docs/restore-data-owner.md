@@ -73,6 +73,12 @@ file modes but does not keep file owners.
 
 Linux tests cover private modes and bytes, internal link chains, repeated
 recovery, and refusal of external/broken/cyclic links, hard links, a linked
-data root and a nested bind mount. These checks do not qualify all Home
+data root and a nested bind mount. A complete protected full-restore job on
+the same separate development container also passed: four selected restored
+files kept their bytes and modes, the matching old Core started after the
+owner repair, and its saved chart rows and two archive hours remained. Core
+was stopped again with Start on boot and Watchdog off.
+
+These checks do not qualify all Home
 Assistant OS or community layouts, entity continuity or physical control.
 The old 3.x publication workflows remain retired.

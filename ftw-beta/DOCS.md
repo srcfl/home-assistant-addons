@@ -42,6 +42,10 @@ compatible app version with its matching backup. Supervisor owns recovery;
 FTW's own updater is not present. There are no new 2.x or 3.x updates, and an
 old update notice is not a path to new 0.x.
 
+If the restored app cannot open its data because files belong to root, see
+[Recover file ownership](../docs/restore-data-owner.md). Keep the app stopped
+and preserve its original backup before that step.
+
 ## Support
 
 See the repository [support routes](https://github.com/srcfl/home-assistant-addons/blob/main/SUPPORT.md).

@@ -19,11 +19,13 @@ the check or create an empty setup.
 
 1. Complete the Supervisor restore from the original matching backup.
 2. In the FTW app page, turn off **Start on boot** and **Watchdog** again: the
-   restore may have returned their saved values. Stop the app.
+   restore may have returned their saved values. Record the restored FTW
+   container's image and data mount before stopping it; Supervisor can remove
+   the container when it stops the app.
 3. If a replacement FTW Core is running, save its full backup and stop it
    before starting the old app. Keep any broker the devices need running.
 4. Use an administrator terminal with access to Docker on the Supervisor
-   host. Confirm the old FTW container and its `/data` mount. Do not use this
+   host. Confirm the restored old FTW container and its `/data` mount. Do not use this
    command on another app or on the replacement FTW data.
 
 The example needs Bash, curl and sha256sum on the operator host. The matching
@@ -36,7 +38,11 @@ IMAGE_ID="$(docker inspect --format '{{.Image}}' "$APP_CONTAINER")"
 DATA="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER")"
 test -n "$IMAGE_ID"
 test -n "$DATA"
-test "$(docker inspect --format '{{.State.Running}}' "$APP_CONTAINER")" = false
+
+# Stop FTW through Supervisor now, with Start on boot and Watchdog off.
+# It may retain state "error" after a failed start and remove the container.
+# Check Docker itself: the selected old Core must not be running.
+test -z "$(docker ps --quiet --filter "name=^/${APP_CONTAINER}$")"
 
 mkdir -m 0700 ftw-owner-recovery
 cd ftw-owner-recovery

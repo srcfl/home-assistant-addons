@@ -19,9 +19,9 @@ the check or create an empty setup.
 
 1. Complete the Supervisor restore from the original matching backup.
 2. In the FTW app page, turn off **Start on boot** and **Watchdog** again: the
-   restore may have returned their saved values. Record the restored FTW
-   container's image and data mount before stopping it; Supervisor can remove
-   the container when it stops the app.
+   restore may have returned their saved values. Run the first block below
+   before stopping the restored app. Supervisor can remove its container
+   when it stops the app.
 3. If a replacement FTW Core is running, save its full backup and stop it
    before starting the old app. Keep any broker the devices need running.
 4. Use an administrator terminal with access to Docker on the Supervisor
@@ -38,10 +38,19 @@ IMAGE_ID="$(docker inspect --format '{{.Image}}' "$APP_CONTAINER")"
 DATA="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER")"
 test -n "$IMAGE_ID"
 test -n "$DATA"
+```
 
-# Stop FTW through Supervisor now, with Start on boot and Watchdog off.
-# It may retain state "error" after a failed start and remove the container.
-# Check Docker itself: the selected old Core must not be running.
+Now stop FTW through Supervisor, with Start on boot and Watchdog off. It may
+keep state `error` after a failed start and remove the container. Run the
+second block in the same shell so it uses the verified image and mount from
+the first block. If the container was already absent, stop here and recover
+its verified image and data path from the source records; do not guess.
+
+```bash
+set -euo pipefail
+test -n "$APP_CONTAINER"
+test -n "$IMAGE_ID"
+test -n "$DATA"
 test -z "$(docker ps --quiet --filter "name=^/${APP_CONTAINER}$")"
 
 mkdir -m 0700 ftw-owner-recovery

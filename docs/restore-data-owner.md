@@ -33,7 +33,7 @@ FTW image supplies the recovery container's tools; no image build is needed.
 
 ```bash
 set -euo pipefail
-APP_CONTAINER='addon_REPLACE_WITH_THE_EXISTING_FTW_SLUG'
+APP_CONTAINER='REPLACE_WITH_THE_VERIFIED_FTW_CONTAINER_NAME'
 IMAGE_ID="$(docker inspect --format '{{.Image}}' "$APP_CONTAINER")"
 DATA="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER")"
 test -n "$IMAGE_ID"

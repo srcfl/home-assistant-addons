@@ -39,7 +39,7 @@ docker run --rm -v "${vol}:/data" --entrypoint sh "${image}" -c 'echo "{}" >/dat
 run "${vol}"; healthy
 log "fresh install healthy (setup wizard); /setup -> $(http /setup)"
 docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon'
-owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$(tr "\\0" " " <$p/cmdline 2>/dev/null | cut -d" " -f1)" = /app/ftw ] && stat -c %u:%g $p; done' | head -1)"
+owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && stat -c %u:%g $p; done' | awk 'NR==1')"
 [[ "${owner}" == 100:101 ]] || fail "Core runs as ${owner}, want 100:101"
 log "Core runs as ${owner}"
 [[ "$(http /)" == 200 ]] || fail "web UI root"
@@ -82,7 +82,7 @@ docker exec "${name}" grep -Fxq -- '-- user marker' /data/drivers/custom.lua || 
 docker exec "${name}" grep -q 'HA smoke' /data/config.yaml || fail "config lost"
 log "restored: config, user driver and health intact"
 
-pid="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$(tr "\\0" " " <$p/cmdline 2>/dev/null | cut -d" " -f1)" = /app/ftw ] && basename $p; done' | head -1)"
+pid="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && basename $p; done' | awk 'NR==1')"
 docker exec "${name}" sh -c "kill -KILL ${pid}"
 for _ in $(seq 1 30); do [[ "$(docker inspect -f '{{.State.Running}}' "${name}")" == false ]] && break; sleep 1; done
 [[ "$(docker inspect -f '{{.State.Running}}' "${name}")" == false ]] || fail "kept running after Core died"

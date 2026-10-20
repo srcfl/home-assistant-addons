@@ -56,6 +56,11 @@ jobs:
         run: |
           set -euo pipefail
           branch="bot/pin-ftw-0x-beta-${TAG}"
+          # A repeated dispatch for the same tag is a no-op once its branch exists.
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null; then
+            echo "::notice::${branch} already exists; nothing to do"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "${branch}"

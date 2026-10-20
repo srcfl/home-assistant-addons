@@ -1,13 +1,28 @@
 # Sourceful FTW for Home Assistant
 
 **FTW 2.x and 3.x will receive no further updates. All new releases use the
-new 0.x line. Do not install this repository's 3.x beta to get current FTW.**
+new 0.x line. Do not install this repository's old 3.x beta to get current FTW.**
 
-The existing app is on the retired 3.x line. It does not follow new 0.x
-releases, and no new-line Home Assistant app has shipped. The stable app has
-not been qualified or published.
+## New: FTW (0.x beta) — pilot
 
-## Switch to current FTW
+**FTW (0.x beta)** runs new FTW 0.x directly on Home Assistant OS, for
+example a Home Assistant Green (aarch64) or an amd64 machine. It is a beta
+being piloted on a few sites first. Home Assistant builds it on your device
+from FTW's published release package and checks the pinned SHA-256; no
+registry image is involved.
+
+Step by step for beginners:
+[ftw-0x-beta/DOCS.md](ftw-0x-beta/DOCS.md), also in FTW's docs
+([English](https://github.com/srcfl/ftw/blob/master/docs/home-assistant-app.md),
+[svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
+In short: **Settings → Apps → App store → ⋮ → Repositories**, add
+`https://github.com/srcfl/home-assistant-addons`, install **FTW (0.x beta)**,
+start it and choose **Open web UI**.
+
+The old **FTW (beta)** and **FTW** apps below stay on the retired 3.x line and
+are unchanged.
+
+## Alternative: FTW on a separate Linux host
 
 Follow [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
 ([Svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/update-sv.md)).

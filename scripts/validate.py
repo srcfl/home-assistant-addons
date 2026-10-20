@@ -11,6 +11,11 @@ from typing import Any
 
 import yaml
 
+if __package__:
+    from . import native_pin
+else:
+    import native_pin
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 IMAGE = "ghcr.io/srcfl/home-assistant-addons/ftw"
@@ -67,6 +72,8 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
 
 
 def validate_repository() -> None:
+    if (ROOT / "ftw-0x-beta").is_dir():
+        native_pin.read_pin()
     repository = load_yaml(ROOT / "repository.yaml")
     require(bool(repository.get("name")), "repository.yaml needs name")
     require(repository.get("url") == REPOSITORY_URL, "repository URL is wrong")

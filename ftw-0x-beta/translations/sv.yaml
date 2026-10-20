@@ -1,0 +1,2 @@
+network:
+  8080/tcp: FTW:s webbgränssnitt och API

@@ -1,8 +1,28 @@
 # Compatibility
 
-These are records of the retired app, not current install recommendations.
+## Native 0.x beta
+
+`ftw-0x-beta/config.yaml` and `ftw-0x-beta/Dockerfile` pin the app and Core
+version and the package SHA-256 for amd64 and arm64. `native_pin.py check`
+compares them with the published native receipt and checksum files.
+The package includes Core, web assets, bundled recovery drivers and Energyplan.
+Managed drivers still use Core's signed driver channel.
+
+CI builds and runs the real package on both amd64 and aarch64. It checks setup,
+Energyplan's handshake, restart, persistence, cold restore with root-owned files,
+and process death. It also checks that ownership repair refuses hard links and
+nested mounts and that the runtime directories cannot be symbolic links.
+
+The [0.x app PR](https://github.com/srcfl/home-assistant-addons/pull/21) records
+the Home Assistant OS/Supervisor VM results and remaining physical-site checks.
+No physical Home Assistant Green or attached energy equipment has passed
+qualification yet. Follow [the pilot checks](pilot/README.md).
+
+## Retired apps
+
+The records below describe the retired app, not current install recommendations.
 2.x and 3.x receive no more updates. The app does not follow new 0.x; see
-[the switch instructions](README.md#switch-to-current-ftw).
+[the install choices](README.md).
 
 `compatibility.yaml` (schema 2) is the source of truth for what each app
 installs. The app version mirrors the FTW Core version it runs.

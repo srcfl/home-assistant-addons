@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the repository, both app manifests and the compatibility record."""
+"""Validate the app catalog and retired compatibility records."""
 
 from __future__ import annotations
 
@@ -83,6 +83,23 @@ def validate_repository() -> None:
     require(dockerfile.is_file(), "ftw/Dockerfile is the shared build context and must exist")
     validate_core_image_tag_contract(dockerfile.read_text(encoding="utf-8"))
     require(not (ROOT / "ftw-beta" / "Dockerfile").exists(), "ftw-beta must not carry its own Dockerfile")
+    validate_catalog()
+
+
+def validate_catalog() -> None:
+    # Supervisor finds config files at any depth, skipping hidden and rootfs folders.
+    manifests = {
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.glob("**/config.*")
+        if path.suffix in (".yaml", ".yml", ".json")
+        and not any(part.startswith(".") or part == "rootfs" for part in path.relative_to(ROOT).parts)
+    }
+    require(
+        manifests == {"ftw-0x-beta/config.yaml"},
+        f"only ftw-0x-beta may be listed in the app store, found {sorted(manifests)}",
+    )
+    config = load_yaml(ROOT / "ftw-0x-beta/config.yaml")
+    require("stage" not in config, "native beta must omit stage; Home Assistant has no beta stage")
 
 
 def validate_core_pin(core: Any, channel: str) -> None:
@@ -222,7 +239,8 @@ def validate_channel(channel: str, compat: dict[str, Any]) -> None:
         validate_beta(compat)
     else:
         validate_stable(compat, required=True)
-    config = load_yaml(add_on_directory(channel) / "config.yaml")
+    filename = "retired.yaml" if channel == "beta" else "config.yaml"
+    config = load_yaml(add_on_directory(channel) / filename)
     validate_add_on_config(config, compat, channel)
 
 

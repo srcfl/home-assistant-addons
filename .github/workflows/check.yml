@@ -49,23 +49,7 @@ jobs:
           persist-credentials: false
       - uses: frenck/action-addon-linter@v2.21
         with:
-          path: ./ftw-beta
-      - uses: frenck/action-addon-linter@v2.21
-        with:
           path: ./ftw-0x-beta
-      - id: stable
-        name: Detect the stable app
-        run: |
-          if [ -f ftw/config.yaml ]; then
-            echo "exists=true" >>"${GITHUB_OUTPUT}"
-          else
-            echo "exists=false" >>"${GITHUB_OUTPUT}"
-            echo "::notice::ftw/config.yaml is absent until the first stable promotion"
-          fi
-      - uses: frenck/action-addon-linter@v2.21
-        if: steps.stable.outputs.exists == 'true'
-        with:
-          path: ./ftw
 
   prepare-build:
     name: Prepare native build matrix

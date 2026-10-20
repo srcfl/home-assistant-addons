@@ -87,7 +87,7 @@ def load_repository() -> tuple[dict, str, str]:
     root = upstream_sync.ROOT
     return (
         upstream_sync.load_yaml(root / "compatibility.yaml"),
-        (root / "ftw-beta/config.yaml").read_text(encoding="utf-8"),
+        (root / "ftw-beta/retired.yaml").read_text(encoding="utf-8"),
         (root / "ftw-beta/CHANGELOG.md").read_text(encoding="utf-8"),
     )
 

@@ -6,7 +6,6 @@ url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x-beta
 arch:
   - amd64
   - aarch64
-stage: experimental
 host_network: true
 ports:
   8080/tcp: 8080

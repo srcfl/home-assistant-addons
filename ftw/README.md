@@ -1,8 +1,8 @@
 # FTW — old release line
 
 2.x and 3.x receive no further updates. This app does not follow new 0.x.
-Do not install the 3.x beta to get current FTW. No new-line app has shipped;
-the stable app remains unpublished.
+This stable app was never published. New installs use
+[FTW (0.x beta)](../ftw-0x-beta/DOCS.md).
 
 Use [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
 to run current FTW on a separate Linux host. Keep a backup of this app and

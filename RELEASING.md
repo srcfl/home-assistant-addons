@@ -4,6 +4,12 @@
 
 Sourceful maintains this repository. Fredrik owns FTW's product direction.
 The app slug is `ftw-0x-beta`; its name is **FTW (0.x beta)**.
+Home Assistant has no `beta` stage. Keep the beta name and version, and omit
+`stage` so the store does not add an Experimental flag. This does not promote
+FTW to stable.
+An already installed app keeps its old metadata until its next update or
+rebuild. Reloading the store applies the new store listing; no reinstall is
+needed.
 
 1. Core publishes a native 0.x beta with both Linux packages, their checksums
    and `ftw-native-release.json`.
@@ -43,6 +49,12 @@ recovery. Their presence does not authorize publication. The
 [previous release procedure](https://github.com/srcfl/home-assistant-addons/blob/82172cec84d7d756e35ed40da48e82c59ef5a6f1/RELEASING.md)
 describes that historical pipeline; it is not the current release policy.
 
-Keep the old apps and their data available for recovery. Do not remove them
-as part of the 0.x beta launch. New installs use
+The old apps are no longer listed in the store. `ftw-beta/retired.yaml` keeps
+the last manifest for recovery; do not rename it to `config.yaml`, `config.yml`
+or `config.json`. Supervisor would list it again, even in a nested folder.
+The old `ftw` stable app has no manifest and was never published.
+
+Removing a store entry does not uninstall an existing app or delete its data.
+HA may flag the old app as removed from its repository. Keep its backup and
+published images for recovery. New installs use
 [FTW (0.x beta)](ftw-0x-beta/DOCS.md), or the separate-host route in the README.

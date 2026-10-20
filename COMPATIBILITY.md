@@ -23,6 +23,8 @@ qualification yet. Follow [the pilot checks](pilot/README.md).
 The records below describe the retired app, not current install recommendations.
 2.x and 3.x receive no more updates. The app does not follow new 0.x; see
 [the install choices](README.md).
+The store no longer lists these apps. The last beta manifest is kept in
+`ftw-beta/retired.yaml`, which Supervisor does not load as an app.
 
 `compatibility.yaml` (schema 2) is the source of truth for what each app
 installs. The app version mirrors the FTW Core version it runs.

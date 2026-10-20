@@ -19,8 +19,9 @@ Open **Settings → Apps → Install app → ⋮ → Repositories**, add
 `https://github.com/srcfl/home-assistant-addons`, install **FTW (0.x beta)**,
 start it and choose **Open web UI**.
 
-The old **FTW (beta)** and **FTW** apps below stay on the retired 3.x line and
-are unchanged.
+The app store offers only **FTW (0.x beta)**. The retired 3.x apps are no
+longer listed for new installs. Existing installations and their data stay
+on the device; keep a backup before moving to the new app.
 
 ## Alternative: FTW on a separate Linux host
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -16,7 +19,7 @@ ADD_ON_COMMIT = "e" * 40
 
 def load_repository() -> tuple[dict, dict, str]:
     compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
-    beta_text = (validate.ROOT / "ftw-beta/config.yaml").read_text(encoding="utf-8")
+    beta_text = (validate.ROOT / "ftw-beta/retired.yaml").read_text(encoding="utf-8")
     return compat, yaml.safe_load(beta_text), beta_text
 
 
@@ -49,6 +52,29 @@ class RepositoryTests(unittest.TestCase):
 
     def test_repository_layout_passes(self) -> None:
         validate.validate_repository()
+
+    def test_retired_app_cannot_return_to_the_store(self) -> None:
+        for filename in ("config.yaml", "config.yml", "config.json"):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / "ftw-0x-beta").mkdir()
+                (root / "ftw-0x-beta/config.yaml").write_text("name: FTW (0.x beta)\n")
+                old = root / "archive/ftw-beta"
+                old.mkdir(parents=True)
+                (old / filename).write_text("{}\n")
+                with mock.patch.object(validate, "ROOT", root):
+                    with self.assertRaisesRegex(validate.ValidationError, "only ftw-0x-beta"):
+                        validate.validate_catalog()
+
+    def test_native_beta_does_not_use_a_stage_flag(self) -> None:
+        for stage in ("experimental", "beta"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / "ftw-0x-beta").mkdir()
+                (root / "ftw-0x-beta/config.yaml").write_text(f"stage: {stage}\n")
+                with mock.patch.object(validate, "ROOT", root):
+                    with self.assertRaisesRegex(validate.ValidationError, "must omit stage"):
+                        validate.validate_catalog()
 
     def test_dockerfile_binds_the_image_tag_to_the_core_version(self) -> None:
         validate.validate_core_image_tag_contract(self.dockerfile)

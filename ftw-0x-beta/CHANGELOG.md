@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.154.2-beta.1
+
+- Update FTW to [v0.154.2-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.154.2-beta.1).
+
 ## 0.154.1-beta.1
 
 - First FTW 0.x beta app, built from the v0.154.1-beta.1 release package.

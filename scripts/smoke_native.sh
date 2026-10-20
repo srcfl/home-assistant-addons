@@ -22,6 +22,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Ownership repair must stop before touching a linked file or nested mount.
+docker run --rm --network none --entrypoint bash "${image}" -ceu '
+  mkdir -p /data /outside
+  touch /outside/marker
+  ln -s /outside /data/drivers
+  if /usr/local/bin/run.sh 2>/tmp/error; then exit 1; fi
+  grep -q "/data/drivers must not be a link" /tmp/error
+  test "$(stat -c %u:%g /outside/marker)" = 0:0
+'
+docker run --rm --network none --entrypoint bash "${image}" -ceu '
+  mkdir -p /data
+  touch /data/state.db
+  ln /data/state.db /data/linked
+  if /usr/local/bin/run.sh 2>/tmp/error; then exit 1; fi
+  grep -q "/data contains a hard link" /tmp/error
+  test "$(stat -c %u:%g /data/linked)" = 0:0
+'
+docker run --rm --network none --mount type=tmpfs,destination=/data/nested \
+  --entrypoint bash "${image}" -ceu '
+  touch /data/state.db
+  if /usr/local/bin/run.sh 2>/tmp/error; then exit 1; fi
+  grep -q "/data contains a nested mount" /tmp/error
+  test "$(stat -c %u:%g /data/state.db)" = 0:0
+'
+log "restore repair refuses links and nested mounts"
+
 run() {
   local -a docker_args
   read -r -a docker_args <<< "${FTW_SMOKE_DOCKER_ARGS:-}"

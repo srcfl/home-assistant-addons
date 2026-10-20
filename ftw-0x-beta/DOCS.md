@@ -1,7 +1,8 @@
 # FTW (0.x beta)
 
-> **Beta / pilot.** New FTW 0.x on Home Assistant OS. It gets every FTW beta,
-> so expect frequent updates. The long-tested alternative is FTW on a
+> **Beta / pilot.** New FTW 0.x on Home Assistant OS. Reviewed FTW beta pins
+> arrive as app updates, so expect frequent updates. You choose when to install
+> them. The alternative is FTW on a
 > [separate Linux host](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
 > plus the [MQTT integration](https://github.com/srcfl/ftw/blob/master/docs/ha-integration.md).
 
@@ -20,17 +21,20 @@ settings and history do not move over. Stop FTW on any other computer too.
 
 ## 2. Install
 
-1. **Settings → Apps → App store → ⋮ → Repositories**, add
+1. **Settings → Apps → Install app → ⋮ → Repositories**, add
    `https://github.com/srcfl/home-assistant-addons`.
 2. Open **FTW (0.x beta)** and choose **Install**. On a Green the build takes
    a few minutes.
 3. Turn on **Start on boot** and **Watchdog**, then **Start**.
-4. The **Log** tab should show `FTW starting` and `HTTP API ready`.
+4. The **Log** tab should show `FTW starting`. A new install then shows
+   `no config found — starting setup wizard`; a configured site shows `HTTP API ready`.
 
 ## 3. Set up
 
 Choose **Open web UI** (port 8080) and follow the setup wizard. Give Home
 Assistant a fixed address in your router so devices and apps keep finding it.
+The button opens FTW directly on your home network. It does not use Home
+Assistant ingress; remote access uses a paired FTW client.
 
 ## 4. FTW app and webapp
 
@@ -45,6 +49,8 @@ pair again.
   a way back. `ftw update` does not apply in the app.
 - Data (settings, history, pairing) lives in the app's `/data` and is in Home
   Assistant backups. The app stops briefly during a backup (cold backup).
+- Restore the FTW app from **Settings → System → Backups**. This restores
+  both its version and data. Keep other FTW instances stopped during restore.
 
 ## Troubleshooting
 

@@ -7,7 +7,7 @@ new 0.x line. Do not install this repository's old 3.x beta to get current FTW.*
 
 **FTW (0.x beta)** runs new FTW 0.x directly on Home Assistant OS, for
 example a Home Assistant Green (aarch64) or an amd64 machine. It is a beta
-being piloted on a few sites first. Home Assistant builds it on your device
+for a first pilot. Home Assistant builds it on your device
 from FTW's published release package and checks the pinned SHA-256; no
 registry image is involved.
 
@@ -15,7 +15,7 @@ Step by step for beginners:
 [ftw-0x-beta/DOCS.md](ftw-0x-beta/DOCS.md), also in FTW's docs
 ([English](https://github.com/srcfl/ftw/blob/master/docs/home-assistant-app.md),
 [svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
-In short: **Settings → Apps → App store → ⋮ → Repositories**, add
+Open **Settings → Apps → Install app → ⋮ → Repositories**, add
 `https://github.com/srcfl/home-assistant-addons`, install **FTW (0.x beta)**,
 start it and choose **Open web UI**.
 

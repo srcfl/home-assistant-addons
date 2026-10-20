@@ -2,6 +2,7 @@
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,13 @@ def fake_assets(tag, amd=A, arm=B, sha_arm=None):
 
 
 class ReceiptTest(unittest.TestCase):
+    def test_validator_import_works_in_a_fresh_python_process(self):
+        result = subprocess.run(
+            [sys.executable, "-c", "from scripts import validate; validate.validate_repository()"],
+            cwd=native_pin.ROOT, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepts_matching_sums(self):
         with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.1")):
             self.assertEqual(native_pin.receipt("v0.160.0-beta.1"), {"amd64": A, "arm64": B})

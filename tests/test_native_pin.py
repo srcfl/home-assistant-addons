@@ -1,10 +1,11 @@
 """Offline tests for scripts/native_pin.py (no network)."""
 import json
+import pathlib
 import shutil
 import sys
-import pathlib
-
-import pytest
+import tempfile
+import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 import native_pin  # noqa: E402
@@ -24,45 +25,51 @@ def fake_assets(tag, amd=A, arm=B, sha_arm=None):
     return lambda t, name: files[name]
 
 
-@pytest.fixture
-def app(tmp_path, monkeypatch):
-    shutil.copytree(native_pin.APP, tmp_path / "ftw-0x-beta")
-    monkeypatch.setattr(native_pin, "APP", tmp_path / "ftw-0x-beta")
-    return tmp_path / "ftw-0x-beta"
+class ReceiptTest(unittest.TestCase):
+    def test_accepts_matching_sums(self):
+        with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.1")):
+            self.assertEqual(native_pin.receipt("v0.160.0-beta.1"), {"amd64": A, "arm64": B})
+
+    def test_rejects_sha_file_mismatch(self):
+        with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.1", sha_arm="c" * 64)):
+            with self.assertRaisesRegex(SystemExit, "disagrees"):
+                native_pin.receipt("v0.160.0-beta.1")
+
+    def test_rejects_wrong_tag(self):
+        with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.2")):
+            with self.assertRaisesRegex(SystemExit, "does not describe"):
+                native_pin.receipt("v0.160.0-beta.1")
+
+    def test_old_line_and_stable_tags_are_refused(self):
+        for tag in ("v0.130.0-beta.1", "v3.8.0-beta.1", "v0.160.0", "latest"):
+            with self.subTest(tag=tag), self.assertRaisesRegex(SystemExit, "not a new-line"):
+                native_pin.receipt(tag)
 
 
-def test_receipt_accepts_matching_sums(monkeypatch):
-    monkeypatch.setattr(native_pin, "asset", fake_assets("v0.160.0-beta.1"))
-    assert native_pin.receipt("v0.160.0-beta.1") == {"amd64": A, "arm64": B}
+class PinFilesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.app = pathlib.Path(self.tmp.name) / "ftw-0x-beta"
+        shutil.copytree(native_pin.APP, self.app)
+        patcher = mock.patch.object(native_pin, "APP", self.app)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_bump_rewrites_both_files(self):
+        with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.1")):
+            native_pin.main(["x", "bump", "v0.160.0-beta.1"])
+            self.assertEqual(
+                native_pin.read_pin(), ("v0.160.0-beta.1", "0.160.0-beta.1", {"amd64": A, "arm64": B})
+            )
+            native_pin.main(["x", "check"])
+
+    def test_image_key_is_refused(self):
+        cfg = self.app / "config.yaml"
+        cfg.write_text(cfg.read_text() + "image: ghcr.io/x/y\n")
+        with self.assertRaisesRegex(SystemExit, "no image"):
+            native_pin.read_pin()
 
 
-def test_receipt_rejects_sha_file_mismatch(monkeypatch):
-    monkeypatch.setattr(native_pin, "asset", fake_assets("v0.160.0-beta.1", sha_arm="c" * 64))
-    with pytest.raises(SystemExit, match="disagrees"):
-        native_pin.receipt("v0.160.0-beta.1")
-
-
-def test_receipt_rejects_wrong_tag(monkeypatch):
-    monkeypatch.setattr(native_pin, "asset", fake_assets("v0.160.0-beta.2"))
-    with pytest.raises(SystemExit, match="does not describe"):
-        native_pin.receipt("v0.160.0-beta.1")
-
-
-@pytest.mark.parametrize("tag", ["v0.130.0-beta.1", "v3.8.0-beta.1", "v0.160.0", "latest"])
-def test_old_line_and_stable_tags_are_refused(tag):
-    with pytest.raises(SystemExit, match="not a new-line"):
-        native_pin.receipt(tag)
-
-
-def test_bump_rewrites_both_files(app, monkeypatch):
-    monkeypatch.setattr(native_pin, "asset", fake_assets("v0.160.0-beta.1"))
-    native_pin.main(["x", "bump", "v0.160.0-beta.1"])
-    tag, version, sums = native_pin.read_pin()
-    assert (tag, version, sums) == ("v0.160.0-beta.1", "0.160.0-beta.1", {"amd64": A, "arm64": B})
-    native_pin.main(["x", "check"])
-
-
-def test_image_key_is_refused(app):
-    (app / "config.yaml").write_text((app / "config.yaml").read_text() + "image: ghcr.io/x/y\n")
-    with pytest.raises(SystemExit, match="no image"):
-        native_pin.read_pin()
+if __name__ == "__main__":
+    unittest.main()

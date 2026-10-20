@@ -90,10 +90,14 @@ log "cold backup: $(du -h "${tmp}/backup.tgz" | cut -f1) in $(echo "$(date +%s.%
 docker rm "${name}" >/dev/null
 docker volume create "${vol2}" >/dev/null
 docker run --rm -v "${vol2}:/data" -v "${tmp}:/b" --entrypoint tar "${image}" -C /data -xzpf /b/backup.tgz
+# Match a real Supervisor/securetar restore, rather than tar's preserved uid.
+docker run --rm -v "${vol2}:/data" --entrypoint sh "${image}" -ec \
+  'find -P /data -xdev -exec chown --no-dereference 0:0 {} +; find -P /data -xdev -type f -exec chmod 0644 {} +'
 run "${vol2}"; healthy
 [[ "$(http /api/health)" == 200 ]] || fail "/api/health after restore"
 docker exec "${name}" grep -Fxq -- '-- user marker' /data/drivers/custom.lua || fail "user driver lost"
 docker exec "${name}" grep -q 'HA smoke' /data/config.yaml || fail "config lost"
+docker exec "${name}" sh -ec 'test "$(stat -c %u:%g /data/state.db)" = 100:101; test "$(stat -c %a /data/config.yaml)" = 600'
 log "restored: config, user driver and health intact"
 
 pid="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && basename $p; done' | awk 'NR==1')"

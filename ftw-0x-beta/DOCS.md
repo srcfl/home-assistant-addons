@@ -23,8 +23,8 @@ settings and history do not move over. Stop FTW on any other computer too.
 
 1. **Settings → Apps → Install app → ⋮ → Repositories**, add
    `https://github.com/srcfl/home-assistant-addons`.
-2. Open **FTW (0.x beta)** and choose **Install**. On a Green the build takes
-   a few minutes.
+2. Open **FTW (0.x beta)** and choose **Install**. The first build downloads
+   packages and can take several minutes; wait for it to finish.
 3. Turn on **Start on boot** and **Watchdog**, then **Start**.
 4. The **Log** tab should show `FTW starting`. A new install then shows
    `no config found — starting setup wizard`; a configured site shows `HTTP API ready`.

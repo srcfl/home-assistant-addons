@@ -1,0 +1,65 @@
+name: Pin new FTW 0.x beta (ftw-0x-beta)
+
+# Opens a pull request that moves ftw-0x-beta to a newer FTW 0.x beta after
+# verifying ftw-native-release.json and the .sha256 files. It pushes no image,
+# creates no tag or release: the app is built by Supervisor on the device, so
+# nothing reaches users until a person merges the pull request.
+# The old ftw / ftw-beta apps and their workflows are untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Exact v0.X.Y-beta.N, empty for the newest"
+        required: false
+        type: string
+  repository_dispatch:
+    types: [ftw-native-release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftw-native-pin
+  cancel-in-progress: false
+
+jobs:
+  pin:
+    if: github.repository == 'srcfl/home-assistant-addons'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify and move the pin
+        id: pin
+        env:
+          INPUT_TAG: ${{ inputs.tag || github.event.client_payload.tag || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG}" ] && ! [[ "${INPUT_TAG}" =~ ^v0\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            echo "::error::not a 0.x beta tag"; exit 1
+          fi
+          python scripts/native_pin.py bump ${INPUT_TAG:+"$INPUT_TAG"}
+          tag="$(sed -n 's/^  FTW_VERSION: //p' ftw-0x-beta/build.yaml)"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Open the pin pull request
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pin.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="bot/pin-ftw-0x-beta-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+          git commit -am "chore: pin ftw-0x-beta to FTW ${TAG}"
+          git push origin "${branch}"
+          gh pr create --title "chore: pin ftw-0x-beta to FTW ${TAG}" \
+            --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. Merging publishes this pin to Home Assistant users."

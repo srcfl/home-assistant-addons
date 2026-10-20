@@ -102,3 +102,29 @@ jobs:
         run: scripts/smoke.sh "ftw-home-assistant-ci:${{ matrix.arch }}"
       - name: Check restored data ownership
         run: scripts/test_restore_data_owner.sh "ftw-home-assistant-ci:${{ matrix.arch }}"
+
+  native-0x:
+    name: ftw-0x-beta pin, build and smoke (no push)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify the pin against ftw-native-release.json and .sha256
+        run: python scripts/native_pin.py check
+      - name: Build the app locally, as Supervisor does on the device
+        run: |
+          set -euo pipefail
+          arg() { sed -n "s/^  $1: //p" ftw-0x-beta/build.yaml; }
+          docker build \
+            --build-arg BUILD_ARCH=amd64 \
+            --build-arg "BUILD_VERSION=$(sed -n 's/^version: "\(.*\)"/\1/p' ftw-0x-beta/config.yaml)" \
+            --build-arg "FTW_VERSION=$(arg FTW_VERSION)" \
+            --build-arg "FTW_SHA256_AMD64=$(arg FTW_SHA256_AMD64)" \
+            --build-arg "FTW_SHA256_ARM64=$(arg FTW_SHA256_ARM64)" \
+            --tag ftw-0x-ha-ci:amd64 ftw-0x-beta
+      - name: Smoke runtime, restart, and persistence
+        run: scripts/smoke_native.sh ftw-0x-ha-ci:amd64

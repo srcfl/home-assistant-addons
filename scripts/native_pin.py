@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check or move the ftw-0x-beta pin against FTW's ftw-native-release.json.
 
-  native_pin.py check            verify config.yaml/build.yaml agree and match
+  native_pin.py check            verify config.yaml/Dockerfile agree and match
                                  the release's own receipt and .sha256 files
   native_pin.py bump [TAG]       rewrite the pin to TAG (default: newest new-line
                                  0.x beta) after the same verification
@@ -40,12 +40,18 @@ def valid_tag(tag: str) -> bool:
     return bool(m) and int(m.group(1)) >= MIN_MINOR
 
 
+def tag_order(tag: str) -> tuple[int, ...]:
+    if not valid_tag(tag):
+        raise SystemExit(f"{tag} is not a new-line 0.x beta tag")
+    return tuple(int(x) for x in TAG_RE.fullmatch(tag).groups())
+
+
 def latest_tag() -> str:
     releases = json.loads(fetch(f"https://api.github.com/repos/{REPO}/releases?per_page=50"))
     tags = [r["tag_name"] for r in releases if not r.get("draft") and valid_tag(r["tag_name"])]
     if not tags:
         raise SystemExit("no new-line 0.x beta found")
-    return max(tags, key=lambda t: tuple(int(x) for x in TAG_RE.match(t).groups()))
+    return max(tags, key=tag_order)
 
 
 def receipt(tag: str) -> dict[str, str]:
@@ -60,25 +66,30 @@ def receipt(tag: str) -> dict[str, str]:
         if not HEX64.match(want):
             raise SystemExit(f"{tag}: receipt lacks a sha256 for {arch}")
         line = asset(tag, f"ftw-linux-{arch}.tar.gz.sha256").decode().split()
-        if not line or line[0] != want:
+        if line != [want, f"ftw-linux-{arch}.tar.gz"]:
             raise SystemExit(f"{tag}: {arch} .sha256 file disagrees with the receipt")
     return {"amd64": sums["amd64"], "arm64": sums["arm64"]}
 
 
 def read_pin() -> tuple[str, str, dict[str, str]]:
     config = (APP / "config.yaml").read_text()
-    build = (APP / "build.yaml").read_text()
+    build = (APP / "Dockerfile").read_text()
+    if (APP / "build.yaml").exists():
+        raise SystemExit("keep the native pins in Dockerfile, not deprecated build.yaml")
 
     def field(text: str, key: str) -> str:
-        m = re.search(rf'^\s*{key}:\s*"?([^"\n]+)"?\s*$', text, re.M)
+        m = re.search(rf'^ARG {key}=([^\n]+)$', text, re.M)
+        if m is None:
+            m = re.search(rf'^\s*{key}:\s*"?([^"\n]+)"?\s*$', text, re.M)
         if not m:
             raise SystemExit(f"missing {key}")
         return m.group(1).strip()
 
     tag = field(build, "FTW_VERSION")
+    tag_order(tag)
     version = field(config, "version")
     if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
-        raise SystemExit("config.yaml and build.yaml pin different versions")
+        raise SystemExit("config.yaml and Dockerfile pin different versions")
     if field(config, "slug") != "ftw-0x-beta" or re.search(r"^image:", config, re.M):
         raise SystemExit("ftw-0x-beta must keep its slug and have no image: key (built on the device)")
     return tag, version, {"amd64": field(build, "FTW_SHA256_AMD64"), "arm64": field(build, "FTW_SHA256_ARM64")}
@@ -89,11 +100,11 @@ def write_pin(tag: str, sums: dict[str, str]) -> None:
     version = tag[1:]
     config = (APP / "config.yaml").read_text()
     config = config.replace(f'"{old_version}"', f'"{version}"').replace(old_tag, tag)
-    build = (APP / "build.yaml").read_text().replace(old_tag, tag)
+    build = (APP / "Dockerfile").read_text().replace(old_tag, tag)
     for arch in ("amd64", "arm64"):
         build = build.replace(old_sums[arch], sums[arch])
     (APP / "config.yaml").write_text(config)
-    (APP / "build.yaml").write_text(build)
+    (APP / "Dockerfile").write_text(build)
 
 
 def main(argv: list[str]) -> int:
@@ -105,8 +116,17 @@ def main(argv: list[str]) -> int:
         print(f"ok: ftw-0x-beta pins {tag}")
     elif cmd == "bump":
         tag = argv[2] if len(argv) > 2 else latest_tag()
+        current, _, _ = read_pin()
+        if tag_order(tag) < tag_order(current):
+            print(f"ignored older beta {tag}; already pinned to {current}")
+            return 0
         sums = receipt(tag)
         write_pin(tag, sums)
+        if tag != current:
+            changelog = APP / "CHANGELOG.md"
+            entry = (f"## {tag[1:]}\n\n"
+                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n\n")
+            changelog.write_text(changelog.read_text().replace("# Changelog\n\n", "# Changelog\n\n" + entry, 1))
         read_pin()
         print(f"pinned {tag}")
     else:

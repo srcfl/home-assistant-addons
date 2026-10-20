@@ -27,7 +27,7 @@ jobs:
       - run: python scripts/validate.py
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: python -m compileall -q scripts tests/fixtures
-      - run: shellcheck ftw/run.sh ftw/healthcheck.sh scripts/smoke.sh scripts/restore_data_owner.sh scripts/test_restore_data_owner.sh
+      - run: shellcheck ftw/run.sh ftw/healthcheck.sh ftw-0x-beta/run.sh ftw-0x-beta/healthcheck.sh scripts/smoke.sh scripts/smoke_native.sh scripts/restore_data_owner.sh scripts/test_restore_data_owner.sh
       - name: Check executable files
         run: |
           test -x ftw/run.sh
@@ -36,6 +36,9 @@ jobs:
           test -x scripts/release_gate.py
           test -x scripts/smoke.sh
           test -x tests/fixtures/core/app/ftw
+          test -x ftw-0x-beta/run.sh
+          test -x ftw-0x-beta/healthcheck.sh
+          test -x scripts/smoke_native.sh
 
   home-assistant-lint:
     name: Home Assistant app lint
@@ -47,6 +50,9 @@ jobs:
       - uses: frenck/action-addon-linter@v2.21
         with:
           path: ./ftw-beta
+      - uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./ftw-0x-beta
       - id: stable
         name: Detect the stable app
         run: |
@@ -104,8 +110,12 @@ jobs:
         run: scripts/test_restore_data_owner.sh "ftw-home-assistant-ci:${{ matrix.arch }}"
 
   native-0x:
-    name: ftw-0x-beta pin, build and smoke (no push)
-    runs-on: ubuntu-24.04
+    name: Native beta build and smoke ${{ matrix.arch }}
+    needs: prepare-build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-build.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -118,13 +128,9 @@ jobs:
       - name: Build the app locally, as Supervisor does on the device
         run: |
           set -euo pipefail
-          arg() { sed -n "s/^  $1: //p" ftw-0x-beta/build.yaml; }
           docker build \
-            --build-arg BUILD_ARCH=amd64 \
+            --build-arg "BUILD_ARCH=${{ matrix.arch }}" \
             --build-arg "BUILD_VERSION=$(sed -n 's/^version: "\(.*\)"/\1/p' ftw-0x-beta/config.yaml)" \
-            --build-arg "FTW_VERSION=$(arg FTW_VERSION)" \
-            --build-arg "FTW_SHA256_AMD64=$(arg FTW_SHA256_AMD64)" \
-            --build-arg "FTW_SHA256_ARM64=$(arg FTW_SHA256_ARM64)" \
-            --tag ftw-0x-ha-ci:amd64 ftw-0x-beta
+            --tag "ftw-0x-ha-ci:${{ matrix.arch }}" ftw-0x-beta
       - name: Smoke runtime, restart, and persistence
-        run: scripts/smoke_native.sh ftw-0x-ha-ci:amd64
+        run: scripts/smoke_native.sh "ftw-0x-ha-ci:${{ matrix.arch }}"

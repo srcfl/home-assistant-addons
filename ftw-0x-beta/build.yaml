@@ -1,8 +1,0 @@
-# Pin written by scripts/native_pin.py from FTW's ftw-native-release.json.
-build_from:
-  amd64: debian:trixie-slim
-  aarch64: debian:trixie-slim
-args:
-  FTW_VERSION: v0.154.1-beta.1
-  FTW_SHA256_AMD64: b8215b9b1cbc254a57b7bddde65eee945cfd153bdf98f9211d9052cd4cc8898b
-  FTW_SHA256_ARM64: a030d81c974127b328010c62fabf22989af85839f5d69e9a9bb3ba20e23c2e97

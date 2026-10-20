@@ -4,14 +4,14 @@
 # the native installer and deploy/docker in srcfl/ftw use. Nothing is compiled.
 # Supervisor builds this on the device (config.yaml has no `image:`), so the
 # app never depends on a registry image.
-ARG BUILD_FROM=debian:trixie-slim
-FROM ${BUILD_FROM}
+FROM docker.io/library/debian:trixie-slim
 
 ARG BUILD_ARCH
 ARG BUILD_VERSION=0.0.0-dev
-ARG FTW_VERSION
-ARG FTW_SHA256_AMD64
-ARG FTW_SHA256_ARM64
+# Pins written by scripts/native_pin.py from ftw-native-release.json.
+ARG FTW_VERSION=v0.154.1-beta.1
+ARG FTW_SHA256_AMD64=b8215b9b1cbc254a57b7bddde65eee945cfd153bdf98f9211d9052cd4cc8898b
+ARG FTW_SHA256_ARM64=a030d81c974127b328010c62fabf22989af85839f5d69e9a9bb3ba20e23c2e97
 
 # ca-certificates/curl fetch the package; tzdata keeps plan windows right;
 # wget is what healthcheck.sh uses; setpriv (util-linux) drops to uid 100.
@@ -19,7 +19,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tzdata wget util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# The expected hash is pinned in build.yaml and must also equal the release's
+# The expected hash is pinned above and must also equal the release's
 # own .sha256 file, so a swapped release asset cannot slip in.
 RUN set -eu; \
     test -n "${FTW_VERSION}" || { echo "FTW_VERSION is required" >&2; exit 1; }; \

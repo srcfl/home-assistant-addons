@@ -67,6 +67,9 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
 
 
 def validate_repository() -> None:
+    if (ROOT / "ftw-0x-beta").is_dir():
+        import native_pin
+        native_pin.read_pin()
     repository = load_yaml(ROOT / "repository.yaml")
     require(bool(repository.get("name")), "repository.yaml needs name")
     require(repository.get("url") == REPOSITORY_URL, "repository URL is wrong")

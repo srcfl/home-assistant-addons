@@ -70,6 +70,22 @@ class PinFilesTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "no image"):
             native_pin.read_pin()
 
+    def test_delayed_release_event_cannot_downgrade_pin(self):
+        before = {p.name: p.read_bytes() for p in self.app.iterdir() if p.is_file()}
+        with mock.patch.object(native_pin, "asset") as download:
+            native_pin.main(["x", "bump", "v0.131.0-beta.1"])
+        download.assert_not_called()
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.app.iterdir() if p.is_file()})
+
+    def test_bump_adds_release_notes_once(self):
+        tag = "v0.160.0-beta.1"
+        with mock.patch.object(native_pin, "asset", fake_assets(tag)):
+            native_pin.main(["x", "bump", tag])
+            native_pin.main(["x", "bump", tag])
+        notes = (self.app / "CHANGELOG.md").read_text()
+        self.assertEqual(notes.count("## 0.160.0-beta.1\n"), 1)
+        self.assertIn(f"https://github.com/srcfl/ftw/releases/tag/{tag}", notes)
+
 
 if __name__ == "__main__":
     unittest.main()

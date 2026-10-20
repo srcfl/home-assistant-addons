@@ -22,7 +22,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run() { docker run -d --init ${FTW_SMOKE_DOCKER_ARGS:-} --network host --name "${name}" -v "$1:/data" "${image}" >/dev/null; }
+run() {
+  local -a docker_args
+  read -r -a docker_args <<< "${FTW_SMOKE_DOCKER_ARGS:-}"
+  docker run -d --init "${docker_args[@]}" --network host --name "${name}" -v "$1:/data" "${image}" >/dev/null
+}
 healthy() {
   for _ in $(seq 1 90); do
     [[ "$(docker inspect -f '{{.State.Health.Status}}' "${name}" 2>/dev/null)" == healthy ]] && return 0
@@ -60,6 +64,16 @@ mkdir -p /data/drivers && echo "-- user marker" >/data/drivers/custom.lua'
 docker restart -t 30 "${name}" >/dev/null; healthy
 [[ "$(http /api/health)" == 200 ]] || fail "/api/health after config"
 log "configured Core: /api/health -> 200"
+# Exercise the shipped worker as the same unprivileged user as Core.
+worker=$(docker exec -u 100:101 "${name}" sh -c 'printf '\''{"type":"handshake"}\n'\'' | /app/optimizer/native/bundle/ftw-solver-linux-$(dpkg --print-architecture)')
+[[ "${worker}" == *'"protocol_version":1'* ]] || fail "Energyplan handshake: ${worker}"
+log "bundled Energyplan worker answered its handshake"
+# Core must restart itself in this bundle even without Supervisor's watchdog.
+curl -fsS -m 5 -X POST "http://127.0.0.1:${port}/api/restart" >/dev/null
+sleep 2
+healthy
+[[ "$(http /api/health)" == 200 ]] || fail "/api/health after FTW restart"
+log "FTW's own restart returned to healthy"
 stats() { log "usage ($1): $(docker stats --no-stream --format '{{.CPUPerc}} cpu, {{.MemUsage}}' "${name}"), /data $(docker exec "${name}" du -sh /data | cut -f1)"; }
 stats "configured, just started"
 sleep "${FTW_SMOKE_SOAK_S:-0}"

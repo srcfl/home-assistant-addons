@@ -30,6 +30,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-python@v6
@@ -45,7 +46,7 @@ jobs:
             echo "::error::not a 0.x beta tag"; exit 1
           fi
           python scripts/native_pin.py bump ${INPUT_TAG:+"$INPUT_TAG"}
-          tag="$(sed -n 's/^  FTW_VERSION: //p' ftw-0x-beta/build.yaml)"
+          tag="$(sed -n 's/^ARG FTW_VERSION=//p' ftw-0x-beta/Dockerfile)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
       - name: Open the pin pull request
@@ -56,15 +57,23 @@ jobs:
         run: |
           set -euo pipefail
           branch="bot/pin-ftw-0x-beta-${TAG}"
-          # A repeated dispatch for the same tag is a no-op once its branch exists.
-          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null; then
-            echo "::notice::${branch} already exists; nothing to do"
+          # Recover if a previous run pushed the branch but failed to open its PR.
+          if ! git ls-remote --exit-code --heads origin "${branch}" >/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "${branch}"
+            git commit -am "chore: pin ftw-0x-beta to FTW ${TAG}"
+            git push origin "${branch}"
+          fi
+          state=$(gh pr list --head "${branch}" --state all --json state --jq '.[0].state // empty')
+          if [ -n "${state}" ] && [ "${state}" != OPEN ]; then
+            echo "::notice::The pin PR was already closed; leaving that decision in place"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "${branch}"
-          git commit -am "chore: pin ftw-0x-beta to FTW ${TAG}"
-          git push origin "${branch}"
-          gh pr create --title "chore: pin ftw-0x-beta to FTW ${TAG}" \
-            --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. Merging publishes this pin to Home Assistant users."
+          if [ -z "${state}" ]; then
+            gh pr create --base main --head "${branch}" \
+              --title "chore: pin ftw-0x-beta to FTW ${TAG}" \
+              --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. Merging publishes this pin to Home Assistant users."
+          fi
+          # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
+          gh workflow run check.yml --ref "${branch}"

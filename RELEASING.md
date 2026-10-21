@@ -38,6 +38,11 @@ during the pilot and take a backup before updating. Supervisor owns app updates
 and restores; the native launcher's trial and automatic rollback do not apply.
 There is no stable 0.x app yet. See [qualification](pilot/README.md).
 
+An app-only change may add `.ha.N` to the pinned Core beta version. It keeps
+that Core package and receipt. A same-tag sync preserves the app revision;
+the next Core beta replaces it with that beta's version. Do not activate an
+app feature before the pinned Core package supports it.
+
 ## Retired 2.x and 3.x path
 
 2.x and 3.x receive no further releases. Do not run the old sync, publish,

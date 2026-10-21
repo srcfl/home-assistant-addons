@@ -43,6 +43,7 @@ install -d -o "${runtime_uid}" -g "${runtime_gid}" -m 0750 \
 # as anything but the Home Assistant bundle.
 export FTW_SELFUPDATE_ENABLED=0
 export FTW_BUNDLE=home_assistant_addon
+export FTW_HA_INGRESS=1
 
 # Home Assistant's sidebar panel (ingress) is a launcher page that opens FTW
 # on port 8080. It must never keep Core from starting.

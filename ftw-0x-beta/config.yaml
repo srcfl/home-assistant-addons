@@ -7,19 +7,15 @@ arch:
   - amd64
   - aarch64
 host_network: true
-ports:
-  8080/tcp: 8080
-ports_description:
-  8080/tcp: FTW web interface and API
-# Ingress serves only a launcher page (panel/), so FTW can be pinned to Home
-# Assistant's sidebar. FTW refuses to be framed and stays on port 8080.
 ingress: true
-ingress_port: 8093
-panel_icon: mdi:solar-power-variant
-panel_title: FTW
+ingress_port: 18099
+panel_admin: true
+panel_icon: mdi:lightning-bolt
+homeassistant: "2026.10.2"
 backup: cold
 timeout: 60
 environment:
+  FTW_HA_INGRESS: "1"
   FTW_SELFUPDATE_ENABLED: "0"
   FTW_BUNDLE: home_assistant_addon
   FTW_BUNDLE_VERSION: "0.169.1-beta.1"

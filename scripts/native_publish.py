@@ -92,9 +92,14 @@ def run_check(branch: str, head: str) -> None:
             run_id = str(max(matches, key=lambda run: run["databaseId"])["databaseId"])
             command("gh", "run", "watch", run_id, "--repo", REPOSITORY, "--exit-status", "--interval", "15")
             run = api(f"actions/runs/{run_id}")
-            jobs = api(f"actions/runs/{run_id}/jobs?per_page=100")["jobs"]
-            check_jobs(run, jobs, head)
-            return
+            # GitHub can finish the run before the jobs API catches up.
+            for _ in range(24):
+                jobs = api(f"actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+                if all(job["status"] == "completed" for job in jobs):
+                    check_jobs(run, jobs, head)
+                    return
+                time.sleep(5)
+            raise ValueError("Check jobs did not report their final status")
         time.sleep(5)
     raise ValueError("the dispatched Check run did not appear")
 

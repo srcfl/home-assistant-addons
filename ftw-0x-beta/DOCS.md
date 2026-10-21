@@ -31,14 +31,18 @@ settings and history do not move over. Stop FTW on any other computer too.
 
 ## 3. Set up
 
-Choose **Open web UI** (port 8080) and follow the setup wizard. Give Home
-Assistant a fixed address in your router so devices and apps keep finding it.
-The button opens FTW directly on your home network. It does not use Home
-Assistant ingress; remote access uses a paired FTW client.
+Choose **Open Web UI** inside Home Assistant. HA's administrator login manages
+access; no separate FTW password is needed. This also applies after updating
+an existing install with a saved FTW password. Your data stays in place.
+Turn on **Show in sidebar** on the app's **Info** tab to open FTW from Home
+Assistant's sidebar.
+
+The direct LAN web port is closed. Keep a fixed HA address in your router so
+your devices keep finding it.
 
 ## 4. FTW app and webapp
 
-In FTW: **Settings → FTW app**, then follow
+For a separate FTW client, enable FTW Cloud, then follow
 [Pair with one iPhone](https://github.com/srcfl/ftw/blob/master/docs/pairing.md).
 If you used the webapp with an older FTW, remove it from the home screen and
 pair again.
@@ -58,7 +62,7 @@ pair again.
 |---|---|
 | Not in the store | Check the repository URL; **⋮ → Check for updates**; reload. |
 | Install fails | **Settings → System → Logs → Supervisor**. Download/checksum errors: try again later. |
-| Web UI does not open | Read the app log. Port 8080 must be free. |
+| Web UI does not open | Read the app log. Open it through HA. Ingress port 18099 must be free. |
 | FTW app says the box is too old | You installed the old **FTW (beta)**; install **FTW (0.x beta)**. |
 
 Report app issues [here](https://github.com/srcfl/home-assistant-addons/issues),

@@ -38,6 +38,13 @@ during the pilot and take a backup before updating. Supervisor owns app updates
 and restores; the native launcher's trial and automatic rollback do not apply.
 There is no stable 0.x app yet. See [qualification](pilot/README.md).
 
+An app-only change may use `0.X.Y-betaN-R` for revision R of Core's
+`v0.X.Y-beta.N`, for example `0.154.2-beta1-1`. This format follows
+Supervisor's version order. It keeps that Core package and receipt. A
+same-tag sync preserves the app revision; the next Core beta replaces it
+with that beta's version. Do not activate an app feature before the pinned
+Core package supports it.
+
 ## Retired 2.x and 3.x path
 
 2.x and 3.x receive no further releases. Do not run the old sync, publish,

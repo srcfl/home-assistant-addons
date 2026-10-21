@@ -43,6 +43,7 @@ install -d -o "${runtime_uid}" -g "${runtime_gid}" -m 0750 \
 # as anything but the Home Assistant bundle.
 export FTW_SELFUPDATE_ENABLED=0
 export FTW_BUNDLE=home_assistant_addon
+export FTW_HA_INGRESS=1
 
 exec setpriv --reuid="${runtime_uid}" --regid="${runtime_gid}" --clear-groups -- \
   /app/ftw \

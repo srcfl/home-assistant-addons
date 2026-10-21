@@ -87,7 +87,9 @@ def read_pin() -> tuple[str, str, dict[str, str]]:
     tag = field(build, "FTW_VERSION")
     tag_order(tag)
     version = field(config, "version")
-    if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
+    revision = tag[1:].replace("-beta.", "-beta")
+    if ((version != tag[1:] and not re.fullmatch(re.escape(revision) + r"-[1-9][0-9]*", version))
+            or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag):
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     if field(config, "slug") != "ftw-0x-beta" or re.search(r"^image:", config, re.M):
         raise SystemExit("ftw-0x-beta must keep its slug and have no image: key (built on the device)")
@@ -96,7 +98,7 @@ def read_pin() -> tuple[str, str, dict[str, str]]:
 
 def write_pin(tag: str, sums: dict[str, str]) -> None:
     old_tag, old_version, old_sums = read_pin()
-    version = tag[1:]
+    version = old_version if tag == old_tag else tag[1:]
     config = (APP / "config.yaml").read_text()
     config = config.replace(f'"{old_version}"', f'"{version}"').replace(old_tag, tag)
     build = (APP / "Dockerfile").read_text().replace(old_tag, tag)

@@ -6,8 +6,7 @@
   native_pin.py bump [TAG]       rewrite the pin to TAG (default: newest new-line
                                  0.x beta) after the same verification
 
-It only edits files in this repository. Publishing happens when a person merges
-the resulting pull request; Supervisor then builds the app on the device.
+It only edits files in this repository. The pin workflow merges its pull request after Check passes; Supervisor then builds the app on the device.
 """
 from __future__ import annotations
 

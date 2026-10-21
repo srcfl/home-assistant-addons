@@ -87,7 +87,8 @@ def read_pin() -> tuple[str, str, dict[str, str]]:
     tag = field(build, "FTW_VERSION")
     tag_order(tag)
     version = field(config, "version")
-    if (not re.fullmatch(re.escape(tag[1:]) + r"(?:\.ha\.[1-9][0-9]*)?", version)
+    revision = tag[1:].replace("-beta.", "-beta")
+    if ((version != tag[1:] and not re.fullmatch(re.escape(revision) + r"-[1-9][0-9]*", version))
             or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag):
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     if field(config, "slug") != "ftw-0x-beta" or re.search(r"^image:", config, re.M):

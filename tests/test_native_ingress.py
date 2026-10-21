@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from awesomeversion import AwesomeVersion
+
 from scripts import native_pin
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +43,21 @@ printf '  HTTP/1.1 %s Result\\n' "$CODE" >&2
                 self.assertEqual(native_pin.read_pin()[1],version)
                 native_pin.write_pin("v0.160.0-beta.1",sums)
                 self.assertEqual(native_pin.read_pin()[1],"0.160.0-beta.1")
+
+
+class SupervisorVersionTest(unittest.TestCase):
+    def test_app_revisions_and_future_betas_remain_updatable(self):
+        for before,after in (
+            ("0.154.2-beta.1","0.154.2-beta1-1"),
+            ("0.154.2-beta1-1","0.154.2-beta1-2"),
+            ("0.154.2-beta1-2","0.154.2-beta1-100"),
+            ("0.154.2-beta1-100","0.154.2-beta.2"),
+            ("0.154.2-beta2-100","0.154.2-beta.10"),
+            ("0.154.2-beta10-100","0.154.2-beta.11"),
+            ("0.154.2-beta1-1","0.154.3-beta.1"),
+        ):
+            with self.subTest(before=before,after=after):
+                self.assertLess(AwesomeVersion(before),AwesomeVersion(after))
 
 
 if __name__ == '__main__':

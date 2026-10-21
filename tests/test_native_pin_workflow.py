@@ -50,12 +50,13 @@ class PinWorkflowTest(unittest.TestCase):
     def run_pin(self):
         env = dict(os.environ, PATH=f"{self.work}:{os.environ['PATH']}",
                    TEST_ROOT=str(self.work), TAG="v0.160.0-beta.1", GH_TOKEN="test-only")
+        env["GITHUB_OUTPUT"] = str(self.work / "outputs")
         result = subprocess.run(["bash", "-c", self.script], env=env,
                                 capture_output=True, text=True)
         calls = [json.loads(line) for line in (self.work / "calls").read_text().splitlines()]
         return result, calls
 
-    def test_retry_recovers_pushed_branch_and_explicitly_starts_ci(self):
+    def test_retry_recovers_pushed_branch_and_opens_one_pr(self):
         (self.work / "fail-create").touch()
         first, _ = self.run_pin()
         self.assertNotEqual(first.returncode, 0)
@@ -63,8 +64,6 @@ class PinWorkflowTest(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(sum(call[:2] == ["git", "push"] for call in calls), 1)
         self.assertEqual(sum(call[:3] == ["gh", "pr", "create"] for call in calls), 2)
-        self.assertIn(["gh", "workflow", "run", "check.yml", "--ref",
-                       "bot/pin-ftw-0x-beta-v0.160.0-beta.1"], calls)
         third, calls = self.run_pin()
         self.assertEqual(third.returncode, 0, third.stderr)
         self.assertEqual(sum(call[:3] == ["gh", "pr", "create"] for call in calls), 2)

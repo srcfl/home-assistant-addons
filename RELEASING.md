@@ -20,15 +20,20 @@ needed.
    `config.yaml` and `Dockerfile`, adds a changelog entry and opens a PR.
    Older release events cannot lower the pin. The workflow starts CI explicitly
    because PRs opened with `GITHUB_TOKEN` do not start it themselves.
-4. A maintainer reviews the PR and its checks, then merges it. **That merge
-   publishes the app version.** Supervisor builds it on each user's device.
-   This workflow does not push an image or create a release.
+4. The workflow recreates the diff from the public release receipt. Only the
+   bot's three pin files may change. It runs all seven Check jobs on the exact
+   PR commit, then merges automatically. If main moved, it updates the branch
+   and tests again. Failed or skipped checks stop publication.
+5. **The merge publishes the app version.** Supervisor builds it on each user's
+   device. The workflow explicitly runs Check on main after merging, since a
+   `GITHUB_TOKEN` merge does not trigger push workflows. It pushes no image and
+   creates no release.
 
 Manual handoff: run **Pin new FTW 0.x beta** (`sync-native.yml`) with an exact
 published tag, or leave the tag empty to select the newest eligible beta.
 
-Every new beta may propose a pin PR. Users see an update after a maintainer
-merges it; there is no daily automatic merge. Keep HA's **Auto update** off
+Every published native beta starts this flow; it does not wait for a daily
+schedule. Users see an update after the verified pin merges automatically. Keep HA's **Auto update** off
 during the pilot and take a backup before updating. Supervisor owns app updates
 and restores; the native launcher's trial and automatic rollback do not apply.
 There is no stable 0.x app yet. See [qualification](pilot/README.md).

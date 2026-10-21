@@ -3,7 +3,7 @@ name: Pin new FTW 0.x beta (ftw-0x-beta)
 # Opens a pull request that moves ftw-0x-beta to a newer FTW 0.x beta after
 # verifying ftw-native-release.json and the .sha256 files. It pushes no image,
 # creates no tag or release: the app is built by Supervisor on the device, so
-# nothing reaches users until a person merges the pull request.
+# the pin PR merges automatically after Check passes on its exact commit.
 # The old ftw / ftw-beta apps and their workflows are untouched.
 
 on:
@@ -27,12 +27,15 @@ jobs:
   pin:
     if: github.repository == 'srcfl/home-assistant-addons'
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write
       actions: write
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -50,6 +53,7 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
       - name: Open the pin pull request
+        id: pr
         if: steps.pin.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,7 +77,12 @@ jobs:
           if [ -z "${state}" ]; then
             gh pr create --base main --head "${branch}" \
               --title "chore: pin ftw-0x-beta to FTW ${TAG}" \
-              --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. Merging publishes this pin to Home Assistant users."
+              --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. This pin merges automatically after the release receipt and all Check jobs pass. The merge makes the update available in Home Assistant."
           fi
-          # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
-          gh workflow run check.yml --ref "${branch}"
+          echo "number=$(gh pr view "${branch}" --json number --jq .number)" >> "$GITHUB_OUTPUT"
+      - name: Check and publish the pin
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: python -m scripts.native_publish "$PR"

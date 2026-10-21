@@ -46,6 +46,7 @@ COPY run.sh healthcheck.sh /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.sh
 
 ENV HOME=/data \
+    FTW_HA_INGRESS=1 \
     FTW_SELFUPDATE_ENABLED=0 \
     FTW_BUNDLE=home_assistant_addon \
     FTW_BUNDLE_VERSION=${BUILD_VERSION} \
@@ -63,7 +64,7 @@ LABEL io.hass.type="app" \
     com.sourceful.ftw.update-owner="home_assistant_supervisor"
 
 WORKDIR /data
-EXPOSE 8080
+EXPOSE 18099
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=8 \
     CMD ["/usr/local/bin/healthcheck.sh"]
 ENTRYPOINT ["/usr/local/bin/run.sh"]

@@ -34,7 +34,8 @@ settings and history do not move over. Stop FTW on any other computer too.
 Choose **Open Web UI** inside Home Assistant. HA's administrator login manages
 access; no separate FTW password is needed. This also applies after updating
 an existing install with a saved FTW password. Your data stays in place.
-You can turn on **Show in sidebar** on the app page.
+Turn on **Show in sidebar** on the app's **Info** tab to open FTW from Home
+Assistant's sidebar.
 
 The direct LAN web port is closed. Keep a fixed HA address in your router so
 your devices keep finding it.

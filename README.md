@@ -17,7 +17,8 @@ Step by step for beginners:
 [svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
 Open **Settings → Apps → Install app → ⋮ → Repositories**, add
 `https://github.com/srcfl/home-assistant-addons`, install **FTW (0.x beta)**,
-start it and choose **Open web UI**.
+start it and choose **Open web UI**. Turn on **Show in sidebar** on the app's
+**Info** tab to open FTW from Home Assistant's sidebar.
 
 The app store offers only **FTW (0.x beta)**. The retired 3.x apps are no
 longer listed for new installs. Existing installations and their data stay

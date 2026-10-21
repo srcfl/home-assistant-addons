@@ -10,7 +10,8 @@ host_network: true
 ingress: true
 ingress_port: 18099
 # Supervisor defaults panel_admin to true. Keep FTW restricted to HA admins.
-panel_icon: mdi:lightning-bolt
+panel_icon: mdi:solar-power-variant
+panel_title: FTW
 homeassistant: "2026.10.2"
 backup: cold
 timeout: 60

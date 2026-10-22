@@ -14,9 +14,10 @@ ARG FTW_SHA256_AMD64=35a98db5fe35ee7e6bc665a0a1adb6d73c9875e748113450085a82cd239
 ARG FTW_SHA256_ARM64=68a49564633bac92b3e0397cd7ef458b9bd2c6c73a022738d88558319cbdc416
 
 # ca-certificates/curl fetch the package; tzdata keeps plan windows right;
-# wget is what healthcheck.sh uses; setpriv (util-linux) drops to uid 100.
+# wget is what healthcheck.sh uses; setpriv (util-linux) drops to uid 100;
+# busybox httpd serves the sidebar panel.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata wget util-linux \
+    && apt-get install -y --no-install-recommends ca-certificates curl tzdata wget util-linux busybox \
     && rm -rf /var/lib/apt/lists/*
 
 # The expected hash is pinned above and must also equal the release's
@@ -43,7 +44,10 @@ RUN set -eu; \
     chown -R 0:0 /app
 
 COPY run.sh healthcheck.sh /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.sh
+COPY panel/index.html /app/panel/
+COPY panel/httpd.conf /etc/ftw-panel.conf
+RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.sh \
+    && chmod 0644 /app/panel/index.html /etc/ftw-panel.conf
 
 ENV HOME=/data \
     FTW_SELFUPDATE_ENABLED=0 \

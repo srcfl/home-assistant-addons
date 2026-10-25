@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.156.0-beta.1
+
+- Update FTW to [v0.156.0-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.156.0-beta.1).
+
 ## 0.155.1-beta.1
 
 - Update FTW to [v0.155.1-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.155.1-beta.1).

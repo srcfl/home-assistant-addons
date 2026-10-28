@@ -1,5 +1,5 @@
 name: FTW (0.x beta)
-version: "0.157.2-beta.1"
+version: "0.157.3-beta.1"
 slug: ftw-0x-beta
 description: New FTW 0.x beta, built on the device from the checksummed release package.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x-beta
@@ -17,8 +17,8 @@ timeout: 60
 environment:
   FTW_SELFUPDATE_ENABLED: "0"
   FTW_BUNDLE: home_assistant_addon
-  FTW_BUNDLE_VERSION: "0.157.2-beta.1"
-  FTW_IMAGE_TAG: v0.157.2-beta.1
+  FTW_BUNDLE_VERSION: "0.157.3-beta.1"
+  FTW_IMAGE_TAG: v0.157.3-beta.1
 # No `image:` key on purpose. Supervisor builds this Dockerfile on the device,
 # so nothing is pushed to a registry and merging to main is the only way a new
 # pin reaches users.

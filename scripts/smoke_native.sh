@@ -74,6 +74,12 @@ owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/
 log "Core runs as ${owner}"
 [[ "$(http /)" == 200 ]] || fail "web UI root"
 log "web UI / -> 200"
+# The sidebar panel answers only Supervisor's ingress proxy (172.30.32.2).
+panel="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8093/")" || true
+[[ "${panel}" == 403 ]] || fail "sidebar panel from 127.0.0.1 -> ${panel}, want 403"
+panel_owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "httpd -p 8093" && stat -c %u:%g $p; done; true' | awk 'NR==1')"
+[[ "${panel_owner}" == 100:101 ]] || fail "sidebar panel runs as ${panel_owner:-nothing}, want 100:101"
+log "sidebar panel refuses non-Supervisor clients"
 
 docker exec -u 100:101 "${name}" sh -c 'cat >/data/config.yaml <<Y
 site:

@@ -12,6 +12,12 @@ ports:
 ports_description:
   8080/tcp: FTW web interface and API
 webui: http://[HOST]:[PORT:8080]/
+# Ingress serves only a launcher page (panel/), so FTW can be pinned to Home
+# Assistant's sidebar. FTW refuses to be framed and stays on port 8080.
+ingress: true
+ingress_port: 8093
+panel_icon: mdi:solar-power-variant
+panel_title: FTW
 backup: cold
 timeout: 60
 environment:

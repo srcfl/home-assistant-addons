@@ -9,9 +9,9 @@ FROM docker.io/library/debian:trixie-slim
 ARG BUILD_ARCH
 ARG BUILD_VERSION=0.0.0-dev
 # Pins written by scripts/native_pin.py from ftw-native-release.json.
-ARG FTW_VERSION=v0.159.0-beta.1
-ARG FTW_SHA256_AMD64=a87bdb662c75265c2dd05619225e729ac22241473555d8e9b3a031b60af0876a
-ARG FTW_SHA256_ARM64=8cfe7644a16d3007eb0570f5dfb8fb483712231dbe12825bda75af4f516d406c
+ARG FTW_VERSION=v0.160.0-beta.1
+ARG FTW_SHA256_AMD64=2b5b7bd4b6e02047a1436762f3cce59409e6d5b1ee99f89c5a6ab4c3220bdd83
+ARG FTW_SHA256_ARM64=44dc1f3aa3143649da87635e35049158014690aa5947cdc73add21ed9e274aea
 
 # ca-certificates/curl fetch the package; tzdata keeps plan windows right;
 # wget is what healthcheck.sh uses; setpriv (util-linux) drops to uid 100.

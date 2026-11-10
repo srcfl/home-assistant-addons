@@ -10,10 +10,13 @@ It only edits files in this repository. The pin workflow merges its pull request
 """
 from __future__ import annotations
 
+import http.client
 import json
 import pathlib
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -22,12 +25,32 @@ REPO = "srcfl/ftw"
 TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)-beta\.(\d+)$")
 MIN_MINOR = 131  # the new 0.x line starts at v0.131.0-beta.1
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+ATTEMPTS = 3
+PAUSE_S = 2  # before the second attempt; twice that before the third
 
 
 def fetch(url: str) -> bytes:
+    """Read url. Try again after a timeout, a broken connection or an HTTP 5xx.
+
+    One slow answer from GitHub used to fail the whole run, and a failed pin run
+    leaves that release unpinned until the next one. An HTTP 4xx still fails at
+    once: a missing file does not turn up by waiting.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "ftw-ha-native-pin"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read()
+        # OSError covers timeouts, refused or reset connections and HTTPError.
+        # HTTPException covers an answer that was cut short.
+        except (OSError, http.client.HTTPException) as err:
+            client_error = isinstance(err, urllib.error.HTTPError) and err.code < 500
+            if client_error or attempt == ATTEMPTS:
+                raise
+            pause = PAUSE_S * attempt
+            print(f"{url}: {err!r}; attempt {attempt + 1} of {ATTEMPTS} in {pause} s", file=sys.stderr)
+            time.sleep(pause)
+    raise AssertionError("ATTEMPTS must be at least 1")
 
 
 def asset(tag: str, name: str) -> bytes:

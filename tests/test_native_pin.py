@@ -63,12 +63,16 @@ class PinFilesTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.tmp.cleanup)
+        # One minor ahead of whatever the app pins today. A fixed "next" version
+        # stops being next the day FTW releases it, and every pin PR then fails.
+        minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
+        self.newer = f"v0.{minor + 1}.0-beta.1"
 
     def test_bump_rewrites_both_files(self):
-        with mock.patch.object(native_pin, "asset", fake_assets("v0.160.0-beta.1")):
-            native_pin.main(["x", "bump", "v0.160.0-beta.1"])
+        with mock.patch.object(native_pin, "asset", fake_assets(self.newer)):
+            native_pin.main(["x", "bump", self.newer])
             self.assertEqual(
-                native_pin.read_pin(), ("v0.160.0-beta.1", "0.160.0-beta.1", {"amd64": A, "arm64": B})
+                native_pin.read_pin(), (self.newer, self.newer[1:], {"amd64": A, "arm64": B})
             )
             native_pin.main(["x", "check"])
 
@@ -86,12 +90,12 @@ class PinFilesTest(unittest.TestCase):
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.app.iterdir() if p.is_file()})
 
     def test_bump_adds_release_notes_once(self):
-        tag = "v0.160.0-beta.1"
+        tag = self.newer
         with mock.patch.object(native_pin, "asset", fake_assets(tag)):
             native_pin.main(["x", "bump", tag])
             native_pin.main(["x", "bump", tag])
         notes = (self.app / "CHANGELOG.md").read_text()
-        self.assertEqual(notes.count("## 0.160.0-beta.1\n"), 1)
+        self.assertEqual(notes.count(f"## {tag[1:]}\n"), 1)
         self.assertIn(f"https://github.com/srcfl/ftw/releases/tag/{tag}", notes)
 
 

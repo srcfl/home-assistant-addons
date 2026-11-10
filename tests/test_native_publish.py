@@ -72,10 +72,13 @@ class PublishTest(unittest.TestCase):
             git("commit", "-m", "base")
             base = git("rev-parse", "HEAD")
             with patch.object(native_pin, "APP", app), patch.object(native_pin, "receipt", return_value=SUMS):
-                native_pin.main(["native_pin.py", "bump", TAG])
+                # One minor ahead of the copied pin. A fixed tag stops being
+                # newer the day FTW releases it, and the bump then changes nothing.
+                newer = f"v0.{native_pin.tag_order(native_pin.read_pin()[0])[0] + 1}.0-beta.1"
+                native_pin.main(["native_pin.py", "bump", newer])
                 git("commit", "-am", "pin")
                 head = git("rev-parse", "HEAD")
-                publish.verify_change(base, head, TAG)
+                publish.verify_change(base, head, newer)
                 with self.assertRaises(ValueError):
                     publish.verify_change(base, head, "v0.131.0-beta.1")
                 for name in publish.FILES:
@@ -84,13 +87,13 @@ class PublishTest(unittest.TestCase):
                     path.write_text(original + "# unexpected change\n")
                     git("commit", "-am", "tamper")
                     with self.subTest(name=name), self.assertRaises(ValueError):
-                        publish.verify_change(base, git("rev-parse", "HEAD"), TAG)
+                        publish.verify_change(base, git("rev-parse", "HEAD"), newer)
                     git("reset", "--hard", head)
                 (work / "unrelated").write_text("must not merge")
                 git("add", ".")
                 git("commit", "-m", "extra file")
                 with self.assertRaises(ValueError):
-                    publish.verify_change(base, git("rev-parse", "HEAD"), TAG)
+                    publish.verify_change(base, git("rev-parse", "HEAD"), newer)
             os.chdir(previous)
 
     def test_merge_requires_fresh_head_and_base_and_dispatches_main_check(self):

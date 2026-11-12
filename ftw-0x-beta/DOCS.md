@@ -31,10 +31,14 @@ settings and history do not move over. Stop FTW on any other computer too.
 
 ## 3. Set up
 
-Choose **Open web UI** (port 8080) and follow the setup wizard. Give Home
-Assistant a fixed address in your router so devices and apps keep finding it.
-The button opens FTW directly on your home network. It does not use Home
-Assistant ingress; remote access uses a paired FTW client.
+Choose **Open web UI**, then **Open FTW**, and follow the setup wizard. Give
+Home Assistant a fixed address in your router so devices and apps keep finding
+it. FTW opens in a new tab directly on your home network, port 8080; it does
+not run inside Home Assistant's frame. Remote access uses a paired FTW client.
+
+To pin FTW to Home Assistant's sidebar, turn on **Show in sidebar** on the
+app's **Info** tab. The sidebar entry opens the same page with the
+**Open FTW** button.
 
 ## 4. FTW app and webapp
 

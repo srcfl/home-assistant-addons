@@ -11,7 +11,6 @@ ports:
   8080/tcp: 8080
 ports_description:
   8080/tcp: FTW web interface and API
-webui: http://[HOST]:[PORT:8080]/
 # Ingress serves only a launcher page (panel/), so FTW can be pinned to Home
 # Assistant's sidebar. FTW refuses to be framed and stays on port 8080.
 ingress: true

@@ -57,4 +57,5 @@ Erik Arenhill built and maintained the first community FTW add-on. HuggeK's
 Core-plus-Optimizer package and process wrapper. This repository keeps their
 useful work and records the changes in [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Licensed under the [Apache License 2.0](LICENSE).
+The packaging here uses the [Apache License 2.0](LICENSE). The FTW software
+it installs keeps its own licenses; see [LICENSING.md](LICENSING.md).

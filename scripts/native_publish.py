@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Publish only a verified bot pin after Check passes on its exact commit."""
+"""Publish only a verified bot pin, once its image and Check pass on its exact commit.
+
+  native_publish.py prepare PR   verify the pin and print the image it needs
+                                 (head, version, recipe, directory), before
+                                 any job builds it
+  native_publish.py publish PR   run Check, verify the pushed images, merge
+"""
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import os
@@ -12,7 +19,7 @@ import tempfile
 import time
 from unittest.mock import patch
 
-from scripts import native_pin
+from scripts import native_image, native_pin
 
 REPOSITORY = "srcfl/home-assistant-addons"
 FILES = tuple(f"ftw-0x-beta/{name}" for name in ("config.yaml", "Dockerfile", "CHANGELOG.md"))
@@ -85,8 +92,11 @@ def recreate(commit: str, tag: str) -> tuple[dict[str, str | None], dict[str, st
     return before, after
 
 
-def verify_change(base: str, head: str, tag: str) -> None:
-    """Recreate the entire diff with trusted code, never code from the PR."""
+def verify_change(base: str, head: str, tag: str) -> set[str]:
+    """Recreate the entire diff with trusted code, never code from the PR.
+
+    Returns the app folders the pin moves.
+    """
     before, expected = recreate(base, tag)
     moved = {name for name in expected if expected[name] != before[name]}
     if not moved:
@@ -96,6 +106,49 @@ def verify_change(base: str, head: str, tag: str) -> None:
     for name in expected:
         if show(head, name) != expected[name]:
             raise ValueError(f"{name} contains changes outside the verified release pin")
+    return {name.split("/", 1)[0] for name in moved}
+
+
+def image_recipe(commit: str, directories: set[str]) -> tuple[str, str]:
+    """The recipe of the image a pin needs, and an app folder to build it from.
+
+    Every app a pin moves pulls the same image, so their recipes must match.
+    """
+    recipes = {directory: native_image.recipe_at(commit, directory) for directory in sorted(directories)}
+    if len(set(recipes.values())) != 1:
+        raise ValueError("the apps this pin moves would build different images")
+    directory = native_pin.APP.name if native_pin.APP.name in recipes else min(recipes)
+    return recipes[directory], directory
+
+
+def up_to_date(number: str) -> tuple[dict, str, str, str, set[str]]:
+    """The verified pin and the apps it moves, its branch updated if main moved."""
+    for _ in range(4):
+        pr = api(f"pulls/{number}")
+        tag = identity(pr)
+        head = pr["head"]["sha"]
+        base = api("git/ref/heads/main")["object"]["sha"]
+        command("git", "fetch", "origin", base, head)
+        ancestor = command("git", "merge-base", base, head)
+        moved = verify_change(ancestor, head, tag)
+        if ancestor == base:
+            return pr, tag, head, base, moved
+        # Do not replay a delayed event over a newer version on main.
+        before, after = recreate(base, tag)
+        if before == after:
+            raise ValueError("main already contains this release or a newer one")
+        api(f"pulls/{number}/update-branch", "--method", "PUT", "-f", f"expected_head_sha={head}")
+        time.sleep(5)
+    raise ValueError("main kept changing; rerun the pin workflow to retry")
+
+
+def prepare(number: str) -> dict[str, str]:
+    """Verify an open pin before any job builds or signs its image."""
+    if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
+        raise ValueError("publication is restricted to the canonical repository")
+    _, tag, head, _, moved = up_to_date(number)
+    recipe, directory = image_recipe(head, moved)
+    return {"head": head, "version": tag[1:], "recipe": recipe, "directory": directory}
 
 
 def check_jobs(run: dict, jobs: list[dict], head: str) -> None:
@@ -137,21 +190,7 @@ def publish(number: str) -> None:
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("publication is restricted to the canonical repository")
     for _ in range(4):
-        pr = api(f"pulls/{number}")
-        tag = identity(pr)
-        head = pr["head"]["sha"]
-        base = api("git/ref/heads/main")["object"]["sha"]
-        command("git", "fetch", "origin", base, head)
-        ancestor = command("git", "merge-base", base, head)
-        verify_change(ancestor, head, tag)
-        if ancestor != base:
-            # Do not replay a delayed event over a newer version on main.
-            before, after = recreate(base, tag)
-            if before == after:
-                raise ValueError("main already contains this release or a newer one")
-            api(f"pulls/{number}/update-branch", "--method", "PUT", "-f", f"expected_head_sha={head}")
-            time.sleep(5)
-            continue
+        pr, tag, head, base, moved = up_to_date(number)
         run_check(pr["head"]["ref"], head)
         fresh = api(f"pulls/{number}")
         identity(fresh)
@@ -159,6 +198,10 @@ def publish(number: str) -> None:
             raise ValueError("the PR changed while Check ran")
         if api("git/ref/heads/main")["object"]["sha"] != base:
             continue  # Refresh the base and test the resulting commit again.
+        # A pin without its image must never reach users. The image job built
+        # it from this recipe; if main changed the recipe since, the image no
+        # longer matches and this stops rather than publish the mismatch.
+        native_image.verify(tag[1:], image_recipe(head, moved)[0])
         result = api(f"pulls/{number}/merge", "--method", "PUT", "-f", f"sha={head}",
                      "-f", "merge_method=squash")
         if not result.get("merged"):
@@ -170,5 +213,18 @@ def publish(number: str) -> None:
     raise ValueError("main kept changing; rerun the pin workflow to retry")
 
 
+def main(argv: list[str]) -> None:
+    if len(argv) == 3 and argv[1] == "prepare":
+        # stdout goes to $GITHUB_OUTPUT; the trusted re-pin's notes go to the log.
+        with contextlib.redirect_stdout(sys.stderr):
+            values = prepare(argv[2])
+        for key, value in values.items():
+            print(f"{key}={value}")
+    elif len(argv) == 3 and argv[1] == "publish":
+        publish(argv[2])
+    else:
+        raise SystemExit(__doc__)
+
+
 if __name__ == "__main__":
-    publish(sys.argv[1])
+    main(sys.argv)

@@ -23,6 +23,8 @@ environment:
   FTW_BUNDLE: home_assistant_addon
   FTW_BUNDLE_VERSION: "0.170.1-beta.1"
   FTW_IMAGE_TAG: v0.170.1-beta.1
-# No `image:` key on purpose. Supervisor builds this Dockerfile on the device,
-# so nothing is pushed to a registry and merging to main is the only way a new
-# pin reaches users.
+# Supervisor pulls `image:` ({arch} filled in) tagged with `version:`. The pin
+# workflow builds, tests, signs and pushes that image from this folder's
+# Dockerfile before the pin merges (RELEASING.md), so a merged pin is still the
+# only way a new version reaches users. Without `image:`, Supervisor builds the
+# Dockerfile on the device instead.

@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,137 @@ class PinWorkflowTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(call[:3] == ["gh", "pr", "create"] for call in calls))
         self.assertFalse(any(call[:3] == ["gh", "workflow", "run"] for call in calls))
+
+
+class ImageFlowTest(unittest.TestCase):
+    """The pin workflow builds and signs the image before it can merge the pin."""
+
+    def setUp(self):
+        self.workflow = yaml.load((ROOT / ".github/workflows/sync-native.yml").read_text(), Loader=yaml.BaseLoader)
+        self.jobs = self.workflow["jobs"]
+
+    def steps(self, job):
+        return self.jobs[job]["steps"]
+
+    def step(self, job, name):
+        return next(step for step in self.steps(job) if step.get("name") == name)
+
+    def test_jobs_run_in_order(self):
+        self.assertEqual(list(self.jobs), ["pin", "image", "publish"])
+        self.assertEqual(self.jobs["image"]["needs"], "pin")
+        self.assertEqual(self.jobs["publish"]["needs"], ["pin", "image"])
+        # A plain success() gate: a failed or skipped image job stops the merge.
+        self.assertNotIn("if", self.jobs["publish"])
+        self.assertEqual(self.jobs["image"]["if"], "needs.pin.outputs.number != ''")
+
+    def test_only_the_image_job_writes_packages_or_signs(self):
+        for name, job in self.jobs.items():
+            permissions = job.get("permissions", {})
+            with self.subTest(job=name):
+                if name == "image":
+                    self.assertEqual(permissions, {"contents": "read", "packages": "write", "id-token": "write"})
+                else:
+                    self.assertNotIn("packages", permissions)
+                    self.assertNotIn("id-token", permissions)
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+
+    def test_each_architecture_builds_on_its_own_runner(self):
+        from scripts import native_image
+        matrix = self.jobs["image"]["strategy"]["matrix"]["include"]
+        self.assertEqual({entry["arch"]: entry["os"] for entry in matrix},
+                         {"amd64": "ubuntu-24.04", "aarch64": "ubuntu-24.04-arm"})
+        self.assertEqual(tuple(entry["arch"] for entry in matrix), native_image.ARCHES)
+
+    def test_the_image_job_builds_the_verified_commit(self):
+        prepare = self.step("pin", "Verify the pin and name its image")
+        names = [step.get("name") for step in self.steps("pin")]
+        self.assertLess(names.index("Open the pin pull request"), names.index(prepare["name"]))
+        self.assertIn("native_publish prepare", prepare["run"])
+        checkout = self.steps("image")[0]
+        self.assertTrue(checkout["uses"].startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"], {"ref": "${{ needs.pin.outputs.head }}", "persist-credentials": "false"})
+        found = self.step("image", "Look for this version's image")["run"]
+        self.assertIn('test "$(git rev-parse HEAD)" = "${HEAD}"', found)
+        self.assertIn('native_image recipe "${APP_DIR}")" = "${RECIPE}"', found)
+
+    def test_build_smoke_push_and_sign_in_that_order(self):
+        names = [step.get("name") or step.get("uses") for step in self.steps("image")]
+        build = names.index("Build from the pinned release package")
+        smoke = names.index("Smoke the image under Supervisor-like conditions")
+        push = names.index("Push to a new tag and sign the pushed digest")
+        self.assertLess(build, smoke)
+        self.assertLess(smoke, push)
+        run = self.step("image", "Build from the pinned release package")["run"]
+        for part in ("--pull", '"BUILD_ARCH=${ARCH}"', '"BUILD_VERSION=${VERSION}"',
+                     '"com.sourceful.ftw.recipe=${RECIPE}"', '"${APP_DIR}"'):
+            self.assertIn(part, run)
+        self.assertIn("scripts/smoke_native.sh", self.step("image", names[smoke])["run"])
+        self.assertIn("native_image push", self.step("image", names[push])["run"])
+        for name in names[build:]:
+            self.assertEqual(self.step("image", name).get("if"), "steps.found.outputs.digest == ''", name)
+        text = (ROOT / ".github/workflows/sync-native.yml").read_text()
+        for forbidden in ("docker tag", "imagetools create", "--force", ":latest"):
+            self.assertNotIn(forbidden, text)
+
+    def test_a_rerun_signs_what_an_earlier_run_pushed(self):
+        names = [step.get("name") for step in self.steps("image")]
+        found = names.index("Look for this version's image")
+        resume = self.step("image", "Sign an image an earlier run pushed")
+        self.assertEqual(resume["if"], "steps.found.outputs.digest != ''")
+        self.assertEqual(resume["run"],
+                         'python -m scripts.native_image resume "${ARCH}" "${VERSION}" "${RECIPE}" "${HEAD}"')
+        self.assertLess(found, names.index(resume["name"]))
+        # Cosign is there for both paths, before either needs it.
+        cosign = next(i for i, step in enumerate(self.steps("image"))
+                      if step.get("uses", "").startswith("sigstore/cosign-installer@"))
+        self.assertLess(cosign, found)
+        self.assertNotIn("if", self.steps("image")[cosign])
+
+    def test_the_image_job_pins_its_actions_by_commit(self):
+        for step in self.steps("image"):
+            if "uses" in step:
+                with self.subTest(uses=step["uses"]):
+                    self.assertRegex(step["uses"], r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
+        text = (ROOT / ".github/workflows/sync-native.yml").read_text()
+        for use in re.findall(r"uses: (\S+@[0-9a-f]{40})( # \S+)?", text):
+            self.assertTrue(use[1], f"{use[0]} names no version")
+
+    def test_every_workflow_installs_the_same_cosign(self):
+        from scripts import native_image
+        installs = []
+        for name in ("sync-native.yml", "check.yml"):
+            document = yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
+            for job in document["jobs"].values():
+                installs += [step for step in job["steps"]
+                             if step.get("uses", "").startswith("sigstore/cosign-installer@")]
+        self.assertEqual(len(installs), 3)  # image, publish, Check on main
+        for step in installs:
+            self.assertEqual(step["with"]["cosign-release"], native_image.COSIGN)
+        releasing = (ROOT / "RELEASING.md").read_text()
+        self.assertIn(f"installs cosign {native_image.COSIGN}", releasing)
+        self.assertIn(f"cosign version   # {native_image.COSIGN}", releasing)
+
+    def test_publish_verifies_without_a_registry_login(self):
+        uses = [step.get("uses", "") for step in self.steps("publish")]
+        self.assertFalse(any(use.startswith("docker/login-action") for use in uses))
+        self.assertTrue(any(use.startswith("sigstore/cosign-installer@") for use in uses))
+        self.assertIn("native_publish publish", self.step("publish", "Check, verify the images and merge")["run"])
+
+    def test_main_checks_its_images_daily(self):
+        check = yaml.load((ROOT / ".github/workflows/check.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(len(check["on"]["schedule"]), 1)
+        self.assertRegex(check["on"]["schedule"][0]["cron"], r"^\d+ \d+ \* \* \*$")
+        # A scheduled run is the image check, not a rebuild of every app.
+        self.assertNotIn("if", check["jobs"]["repository"])
+        for name in ("home-assistant-lint", "prepare-build"):
+            self.assertEqual(check["jobs"][name]["if"], "github.event_name != 'schedule'")
+        for name in ("container", "native-0x"):
+            self.assertEqual(check["jobs"][name]["needs"], "prepare-build")
+        steps = check["jobs"]["repository"]["steps"]
+        verify = next(step for step in steps if "verify-main" in step.get("run", ""))
+        self.assertEqual(verify["if"], "github.ref == 'refs/heads/main'")
+        self.assertTrue(any(step.get("uses", "").startswith("sigstore/cosign-installer@")
+                            and step.get("if") == verify["if"] for step in steps))
 
 
 if __name__ == "__main__":

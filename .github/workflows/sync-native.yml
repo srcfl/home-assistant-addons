@@ -4,9 +4,13 @@ name: Pin new FTW 0.x release (ftw-0x-beta, ftw-0x)
 # ftw-native-release.json and the .sha256 files. A beta moves ftw-0x-beta. A
 # stable moves the stable app ftw-0x, and ftw-0x-beta too when it outranks
 # the beta pin, as Core's beta channel takes the highest release. The first
-# stable pin lists ftw-0x in the store. It pushes no image, creates no tag or
-# release: Supervisor builds the app on the device, so the pin PR merges
-# automatically after Check passes on its exact commit.
+# stable pin lists ftw-0x in the store.
+# Before the merge, one job per architecture builds the pin's Dockerfile from
+# the checksummed release package, smoke-tests it, pushes it to a tag that
+# does not exist yet and signs it (keyless Cosign, as this workflow on main).
+# The pin merges only after Check passes on its exact commit and both images
+# are public, signed and built from that commit's recipe. The merge is what
+# shows users the new version. It creates no git tag or release.
 # The retired 3.x ftw / ftw-beta apps and their workflows are untouched.
 
 on:
@@ -30,11 +34,16 @@ jobs:
   pin:
     if: github.repository == 'srcfl/home-assistant-addons'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
-      actions: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      head: ${{ steps.prepare.outputs.head }}
+      version: ${{ steps.prepare.outputs.version }}
+      recipe: ${{ steps.prepare.outputs.recipe }}
+      directory: ${{ steps.prepare.outputs.directory }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -90,12 +99,115 @@ jobs:
           if [ -z "${state}" ]; then
             gh pr create --base main --head "${branch}" \
               --title "chore: pin ${APPS} to FTW ${TAG}" \
-              --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. This pin merges automatically after the release receipt and all Check jobs pass. The merge makes the update available in Home Assistant."
+              --body "Verified against ftw-native-release.json and the .sha256 files of ${TAG}. This pin merges automatically once its signed images are pushed and the release receipt and all Check jobs pass. The merge makes the update available in Home Assistant."
           fi
           echo "number=$(gh pr view "${branch}" --json number --jq .number)" >> "$GITHUB_OUTPUT"
-      - name: Check and publish the pin
+      # Nothing is built from the branch until trusted code has recreated its diff.
+      - name: Verify the pin and name its image
+        id: prepare
         if: steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
-        run: python -m scripts.native_publish "$PR"
+        run: python -m scripts.native_publish prepare "$PR" >> "$GITHUB_OUTPUT"
+
+  image:
+    name: Build, push and sign ${{ matrix.arch }}
+    needs: pin
+    if: needs.pin.outputs.number != ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # keyless Cosign signature
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    env:
+      ARCH: ${{ matrix.arch }}
+      HEAD: ${{ needs.pin.outputs.head }}
+      VERSION: ${{ needs.pin.outputs.version }}
+      RECIPE: ${{ needs.pin.outputs.recipe }}
+      APP_DIR: ${{ needs.pin.outputs.directory }}
+    # This job checks out the pin's head, yet every script it runs is main's:
+    # the pin job's prepare step (up_to_date, verify_change) proved that head
+    # is a main commit plus the trusted re-pin's lines in the pin files, and
+    # nothing else. Actions are pinned by commit, as this job can write
+    # packages and sign.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.pin.outputs.head }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Look for this version's image
+        id: found
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${HEAD}"
+          test "$(python -m scripts.native_image recipe "${APP_DIR}")" = "${RECIPE}"
+          python -m scripts.native_image state "${ARCH}" "${VERSION}" >> "$GITHUB_OUTPUT"
+      # An earlier run may have pushed and then failed to sign. Sign that digest
+      # only if its labels show this version, recipe and pin commit.
+      - name: Sign an image an earlier run pushed
+        if: steps.found.outputs.digest != ''
+        run: python -m scripts.native_image resume "${ARCH}" "${VERSION}" "${RECIPE}" "${HEAD}"
+      - name: Build from the pinned release package
+        if: steps.found.outputs.digest == ''
+        run: |
+          set -euo pipefail
+          docker build --pull --provenance=false \
+            --build-arg "BUILD_ARCH=${ARCH}" \
+            --build-arg "BUILD_VERSION=${VERSION}" \
+            --label "com.sourceful.ftw.recipe=${RECIPE}" \
+            --label "org.opencontainers.image.revision=${HEAD}" \
+            --tag "$(python -m scripts.native_image ref "${ARCH}" "${VERSION}")" \
+            "${APP_DIR}"
+      - name: Smoke the image under Supervisor-like conditions
+        if: steps.found.outputs.digest == ''
+        run: scripts/smoke_native.sh "$(python -m scripts.native_image ref "${ARCH}" "${VERSION}")"
+      - name: Push to a new tag and sign the pushed digest
+        if: steps.found.outputs.digest == ''
+        run: python -m scripts.native_image push "${ARCH}" "${VERSION}"
+
+  publish:
+    name: Check and publish the pin
+    needs: [pin, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # No registry login here: an image that needs one cannot reach users.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Check, verify the images and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.pin.outputs.number }}
+        run: python -m scripts.native_publish publish "$PR"

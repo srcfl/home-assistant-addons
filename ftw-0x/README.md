@@ -5,8 +5,7 @@ controls them, here on your Home Assistant.
 
 > **Next steps**
 >
-> 1. **Install**, then **Start**. The first install builds the app on your
->    device and takes a few minutes.
+> 1. **Install**, then **Start**.
 > 2. Choose **Open Web UI**.
 > 3. On the **Info** tab, turn on **Show in sidebar**, and **Watchdog** so
 >    Home Assistant restarts FTW if it stops answering.

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Home Assistant downloads a ready, signed image of the app. Installs and updates no longer build it on your device, which took minutes.
+
 ## 0.170.1-beta.1
 
 - Update FTW to [v0.170.1-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.170.1-beta.1).

@@ -4,6 +4,7 @@
 # and removes this file. Do not rename it by hand, and keep the pins empty.
 name: FTW
 version: ""
+image: "ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x"
 slug: ftw-0x
 description: Plans and runs your battery, car charging and solar around electricity prices.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x
@@ -27,6 +28,8 @@ environment:
   FTW_BUNDLE: home_assistant_addon
   FTW_BUNDLE_VERSION: ""
   FTW_IMAGE_TAG: ""
-# No `image:` key on purpose. Supervisor builds this Dockerfile on the device,
-# so nothing is pushed to a registry and merging to main is the only way a new
-# pin reaches users.
+# Supervisor pulls `image:` ({arch} filled in) tagged with `version:`. The pin
+# workflow builds, tests, signs and pushes that image from this folder's
+# Dockerfile before the pin merges (RELEASING.md), so a merged pin is still the
+# only way a new version reaches users. Without `image:`, Supervisor builds the
+# Dockerfile on the device instead.

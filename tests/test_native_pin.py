@@ -177,11 +177,55 @@ class PinFilesTest(AppCopies):
             )
             native_pin.main(["x", "check"])
 
-    def test_image_key_is_refused(self):
+    def without_image(self, config):
+        """The manifest as on-device builds had it; today's pin counts as one."""
+        patcher = mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", native_pin.read_pin()[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        config.write_text(re.sub(r"(?m)^image:.*\n", "", config.read_text()))
+
+    def test_a_later_pin_must_pull_the_image(self):
         cfg = self.app / "config.yaml"
-        cfg.write_text(cfg.read_text() + "image: ghcr.io/x/y\n")
-        with self.assertRaisesRegex(SystemExit, "no image"):
+        with mock.patch.object(native_pin, "asset", fake_assets(self.newer)):
+            native_pin.main(["x", "bump", self.newer])
+        stripped = re.sub(r"(?m)^image:.*\n", "", cfg.read_text())
+        cfg.write_text(stripped)
+        with self.assertRaisesRegex(SystemExit, "newer than .* built on the device; it must pull"):
             native_pin.read_pin()
+        with mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", self.newer):
+            native_pin.read_pin()
+
+    def test_the_last_on_device_release_needs_no_image(self):
+        tag = native_pin.read_pin()[0]
+        cfg = self.app / "config.yaml"
+        cfg.write_text(re.sub(r"(?m)^image:.*\n", "", cfg.read_text()))
+        with mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", tag):
+            self.assertEqual(native_pin.read_pin()[0], tag)
+
+    def test_bump_names_the_prebuilt_image_once(self):
+        cfg = self.app / "config.yaml"
+        self.without_image(cfg)  # as the beta app is before its first pin with an image
+        native_pin.read_pin()
+        later = f"{self.newer[:-1]}2"
+        for tag in (self.newer, later):
+            with mock.patch.object(native_pin, "asset", fake_assets(tag)):
+                native_pin.main(["x", "bump", tag])
+            text = cfg.read_text()
+            self.assertEqual(re.findall(r"(?m)^image:.*$", text), [native_pin.IMAGE_LINE])
+            self.assertIn(f'version: "{tag[1:]}"\n{native_pin.IMAGE_LINE}\n', text)
+            self.assertEqual(native_pin.image(text), native_pin.IMAGE)
+
+    def test_only_the_prebuilt_image_is_accepted(self):
+        cfg = self.app / "config.yaml"
+        self.without_image(cfg)
+        text = cfg.read_text()
+        for extra in ("image: ghcr.io/x/y\n", 'image: "ghcr.io/srcfl/home-assistant-addons/ftw"\n',
+                      f"{native_pin.IMAGE_LINE}\n{native_pin.IMAGE_LINE}\n"):
+            cfg.write_text(text + extra)
+            with self.subTest(extra=extra), self.assertRaisesRegex(SystemExit, "must pull"):
+                native_pin.read_pin()
+        cfg.write_text(text + f"{native_pin.IMAGE_LINE}\n")
+        native_pin.read_pin()
 
     def test_delayed_release_event_cannot_downgrade_pin(self):
         before = {p.name: p.read_bytes() for p in self.app.iterdir() if p.is_file()}
@@ -316,6 +360,18 @@ class StablePinTest(AppCopies):
         stable = self.files(self.stable)
         self.bump(f"v0.{self.minor + 1}.0-beta.1")
         self.assertEqual(stable, self.files(self.stable))
+
+    def test_the_stable_app_names_its_image_before_it_is_listed(self):
+        manifest = self.stable / native_pin.UNLISTED
+        self.assertEqual(native_pin.image(manifest.read_text()), native_pin.IMAGE)
+        text = manifest.read_text()
+        manifest.write_text(re.sub(r"(?m)^image:.*\n", "", text))
+        with self.assertRaisesRegex(SystemExit, "must pull"):
+            native_pin.read_pin("stable")
+        manifest.write_text(text)
+        self.bump(self.first)
+        listed = (self.stable / "config.yaml").read_text()
+        self.assertEqual(re.findall(r"(?m)^image:.*$", listed), [native_pin.IMAGE_LINE])
 
     def test_an_unlisted_app_with_a_pin_is_refused(self):
         build = self.stable / "Dockerfile"

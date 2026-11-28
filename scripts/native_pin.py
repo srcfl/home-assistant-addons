@@ -14,7 +14,9 @@ The stable app stays out of the store until the first 0.x stable: its manifest
 is kept as ftw-0x/unlisted.yaml, which Supervisor does not read, and its pins
 are empty. The first stable bump writes ftw-0x/config.yaml, which lists it.
 
-It only edits files in this repository. The pin workflow merges its pull request after Check passes; Supervisor then builds the app on the device.
+It only edits files in this repository. Every pin also names the prebuilt
+image (IMAGE), which the pin workflow builds, signs and pushes before it
+merges the pin; Supervisor then pulls that image.
 """
 from __future__ import annotations
 
@@ -40,6 +42,16 @@ SLUGS = {"beta": "ftw-0x-beta", "stable": "ftw-0x"}
 # reaches it too.
 TAKES = {"beta": ("beta", "stable"), "stable": ("stable",)}
 UNLISTED = "unlisted.yaml"  # the stable manifest before the first stable
+# The image Supervisor pulls, with {arch} filled in and the app version as
+# its tag. A manifest without it makes Supervisor build the Dockerfile on
+# the device; the beta app does that until its first pin with an image.
+IMAGE = "ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x"
+IMAGE_LINE = f'image: "{IMAGE}"'
+# The last release the beta app built on the device. Every later pin writes
+# IMAGE, so a later release without it can only be a hand edit back to
+# on-device builds. If another pin lands before this rule does, raise this to
+# that release.
+LAST_BUILT_ON_DEVICE = "v0.170.1-beta.1"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
 UNRELEASED = "# Changelog\n\n## Unreleased\n\n"
@@ -149,6 +161,12 @@ def field(text: str, key: str) -> str:
     return m.group(1).strip()
 
 
+def image(text: str) -> str | None:
+    """The manifest's image: value, or None when it has none."""
+    m = re.search(r'^image:[ \t]*"?([^"\n]*?)"?[ \t]*$', text, re.M)
+    return m.group(1) if m else None
+
+
 def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str] | None]:
     """The pinned tag, app version and package sums; all None while unlisted."""
     directory = app_dir(name)
@@ -161,8 +179,13 @@ def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str]
         raise SystemExit(f"{directory.name} must keep one manifest, not config.yaml and {UNLISTED}")
     config = path.read_text()
     build = (directory / "Dockerfile").read_text()
-    if field(config, "slug") != SLUGS[name] or re.search(r"^image:", config, re.M):
-        raise SystemExit(f"{directory.name} must keep slug {SLUGS[name]} and have no image: key (built on the device)")
+    if field(config, "slug") != SLUGS[name]:
+        raise SystemExit(f"{directory.name} must keep slug {SLUGS[name]}")
+    pulled = image(config)
+    if len(re.findall(r"^image:", config, re.M)) > 1 or (pulled is not None and pulled != IMAGE):
+        raise SystemExit(f"{directory.name} must pull {IMAGE}")
+    if pulled is None and name == "stable":
+        raise SystemExit(f"{directory.name} must pull {IMAGE}")
     tag = field(build, "FTW_VERSION")
     version = field(config, "version")
     sums = {"amd64": field(build, "FTW_SHA256_AMD64"), "arm64": field(build, "FTW_SHA256_ARM64")}
@@ -173,6 +196,9 @@ def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str]
         return None, None, None
     if channel(tag) not in TAKES[name]:
         raise SystemExit(f"{directory.name} takes only {' and '.join(TAKES[name])} releases, not {tag}")
+    if pulled is None and tag_order(tag) > tag_order(LAST_BUILT_ON_DEVICE):
+        raise SystemExit(f"{directory.name} pins {tag}, newer than {LAST_BUILT_ON_DEVICE}, the last release "
+                         f"built on the device; it must pull {IMAGE}")
     if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     for arch, value in sums.items():
@@ -202,6 +228,8 @@ def write_pin(tag: str, sums: dict[str, str], name: str = "beta") -> None:
     config = put(config, "version", r'^(version:[ \t]*)"[^"\n]*"[ \t]*$', f'"{version}"')
     config = put(config, "FTW_BUNDLE_VERSION", r'^([ \t]+FTW_BUNDLE_VERSION:[ \t]*)"[^"\n]*"[ \t]*$', f'"{version}"')
     config = put(config, "FTW_IMAGE_TAG", r'^([ \t]+FTW_IMAGE_TAG:[ \t]*)(?:""|\S*)[ \t]*$', tag)
+    if image(config) is None:  # the first pin with a prebuilt image
+        config = put(config, "version", r'^(version:[^\n]*\n)', IMAGE_LINE + "\n")
     build = (directory / "Dockerfile").read_text()
     build = put(build, "FTW_VERSION", r"^(ARG FTW_VERSION=)\S*$", tag)
     build = put(build, "FTW_SHA256_AMD64", r"^(ARG FTW_SHA256_AMD64=)\S*$", sums["amd64"])

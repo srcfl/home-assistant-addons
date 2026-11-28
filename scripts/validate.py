@@ -75,6 +75,9 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
 RECIPE = ("Dockerfile", "run.sh", "healthcheck.sh", "mqtt-service.sh")
 PIN_ARGS = re.compile(r"(?m)^(ARG FTW_(?:VERSION|SHA256_AMD64|SHA256_ARM64)=).*$")
 OWN_KEYS = {"name", "slug", "url", "version", "description"}
+# native_pin.read_pin checks image: on its own. The beta app lacks it until its
+# first pin with a prebuilt image; the stable app has it from the start.
+PIN_KEYS = {"image"}
 # Slugs of the old line. An install may still hold one with old data, so no
 # listed app may use it again: Supervisor would offer that install the update.
 RETIRED_SLUGS = {"ftw", "ftw-beta"}
@@ -90,7 +93,7 @@ def same_recipe(beta: pathlib.Path, stable: pathlib.Path) -> None:
         require(want == got, f"{stable.name}/{name} differs from {beta.name}/{name}; change both")
 
     def settings(path: pathlib.Path) -> dict[str, Any]:
-        config = {k: v for k, v in load_yaml(path).items() if k not in OWN_KEYS}
+        config = {k: v for k, v in load_yaml(path).items() if k not in OWN_KEYS | PIN_KEYS}
         config["environment"] = {k: v for k, v in (config.get("environment") or {}).items() if k not in PIN_ENV}
         return config
 
@@ -170,6 +173,7 @@ def validate_native(compat: dict[str, Any]) -> None:
             block.get("takes") == list(native_pin.TAKES[name]),
             f"native {name} app must take {list(native_pin.TAKES[name])}",
         )
+    require(native.get("image") == native_pin.IMAGE, f"the 0.x apps pull {native_pin.IMAGE}")
     require(native["stable"].get("listed_from") == f"v0.{native_pin.MIN_MINOR}.0",
             f"the stable app is listed from v0.{native_pin.MIN_MINOR}.0")
     retired = set(native.get("retired_slugs") or ())

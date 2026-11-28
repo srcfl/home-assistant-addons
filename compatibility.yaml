@@ -9,8 +9,10 @@ core:
 # sync-native.yml moves them. The beta app follows Core's beta channel: the
 # highest release, beta or stable. The stable app keeps its manifest as
 # unlisted.yaml, out of the store, until it pins the first 0.x stable; that
-# pin writes its config.yaml.
+# pin writes its config.yaml. Both pull one prebuilt image per release, which
+# sync-native.yml builds, signs and pushes before the pin merges.
 native:
+  image: "ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x"
   beta:
     add_on: ftw-0x-beta
     directory: ftw-0x-beta

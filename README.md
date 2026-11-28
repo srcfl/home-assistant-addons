@@ -13,8 +13,8 @@ Ran FTW 2.x or 3.x before? Read
 1. Select the button to add this repository to Home Assistant. Or open
    **Settings → Apps → Install app → ⋮ → Repositories** and add
    `https://github.com/srcfl/home-assistant-addons`.
-2. Install **FTW (beta)**, version 0.x, and choose **Start**. The first
-   install builds the app on your device and takes a few minutes.
+2. Install **FTW (beta)**, version 0.x, and choose **Start**. Home Assistant
+   downloads the app ready to run; nothing is built on your device.
 3. Choose **Open Web UI** and follow FTW's setup guide. Turn on **Show in
    sidebar** on the app's **Info** tab to open FTW from Home Assistant's
    sidebar.
@@ -23,10 +23,11 @@ Step by step: [ftw-0x-beta/DOCS.md](ftw-0x-beta/DOCS.md), also in FTW's docs
 ([English](https://github.com/srcfl/ftw/blob/master/docs/home-assistant-app.md),
 [svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
 
-FTW (beta) is a beta. Home Assistant builds it on your device from FTW's
-published release package and checks the pinned SHA-256; no registry image is
-involved. A stable app, **FTW**, joins the store with FTW's first 0.x stable
-release.
+FTW (beta) is a beta. This repository builds each version into an image from
+FTW's published release package, checks the package against its pinned
+SHA-256, and signs the image. Home Assistant downloads it from GitHub's
+container registry, `ghcr.io`. A stable app, **FTW**, joins the store with
+FTW's first 0.x stable release.
 
 ## FTW on another computer
 

@@ -5,8 +5,7 @@ controls them, here on your Home Assistant.
 
 > **Next steps**
 >
-> 1. **Start** the app. The first install builds it on your device and takes
->    a few minutes.
+> 1. **Start** the app.
 > 2. Choose **Open Web UI**.
 > 3. On the **Info** tab, turn on **Show in sidebar**, and **Watchdog** so
 >    Home Assistant restarts FTW if it stops answering.
@@ -24,10 +23,12 @@ controls them, here on your Home Assistant.
 
 ## How it works
 
-Supervisor builds this app on your device from FTW's release package for your
-CPU (amd64 or aarch64, for example Home Assistant Green). The package's
-SHA-256 is pinned in this repository and checked again against the release's
-own `.sha256` file. A bad download stops the install.
+Home Assistant downloads a ready image of this app for your CPU (amd64 or
+aarch64, for example Home Assistant Green) from GitHub's container registry,
+`ghcr.io`. Nothing is built on your device. This repository builds the image
+from FTW's release package: it checks the package against the SHA-256 pinned
+here and the release's own `.sha256` file, tests the image and signs it, all
+before it offers you the version.
 
 **Why host network.** FTW uses Home Assistant's own network so it can search
 your home network for inverters, meters and chargers, find devices by their
@@ -48,8 +49,8 @@ Stop FTW on any other computer too.
 
    Or open **Settings → Apps → Install app → ⋮ → Repositories** and add
    `https://github.com/srcfl/home-assistant-addons`.
-2. Open **FTW (beta)** (version 0.x) and choose **Install**. The first build
-   downloads packages and can take several minutes; wait for it to finish.
+2. Open **FTW (beta)** (version 0.x) and choose **Install**. Home Assistant
+   downloads the app; wait for the install to finish.
 3. Turn on **Watchdog**, so Home Assistant restarts FTW when its health check
    fails, then **Start**. **Start on boot** is on already.
 4. The **Log** tab should show `FTW starting`. A new install then shows
@@ -104,7 +105,7 @@ older FTW needs the broker typed under **Settings → Integrations**.
 | Symptom | What to do |
 |---|---|
 | Not in the store | Check the repository URL; **⋮ → Check for updates**; reload. |
-| Install fails | **Settings → System → Logs → Supervisor**. Download/checksum errors: try again later. |
+| Install fails | **Settings → System → Logs → Supervisor**. On a download error, check that Home Assistant can reach `ghcr.io`, then try again. |
 | Web UI does not open | Read the app log. Open it through HA. Ingress port 18099 must be free. |
 | FTW app says the box is too old | You run the old 3.x app; install **FTW (beta)** version 0.x from this repository. |
 

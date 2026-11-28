@@ -22,14 +22,22 @@ continued fixes. Follow the [switch guide](https://github.com/srcfl/ftw/blob/mas
 to run new FTW on a separate Linux host. You can still report flaws through
 the private channels above.
 
-An image left in the registry by a failed publication workflow is not a
-published beta. A published beta needs a matching GitHub prerelease, immutable
-digest, Cosign signature, SPDX SBOM, and verified GitHub and OCI attestations.
+The 0.x apps, **FTW (beta)** and **FTW**, pull one image per FTW release from
+`ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x`. `sync-native.yml` builds
+it from the checksummed FTW package and signs it with keyless Cosign as that
+workflow on `main`. A pin merges, and so reaches users, only after both images
+can be pulled without a login and carry that signature. Supervisor does not
+check the signature itself. See [RELEASING.md](RELEASING.md#images).
+
+For the retired 3.x line, an image left in the registry by a failed
+publication workflow is not a published beta. A published 3.x beta needs a
+matching GitHub prerelease, immutable digest, Cosign signature, SPDX SBOM,
+and verified GitHub and OCI attestations.
 
 The app grants no Supervisor API, Home Assistant API, Docker API, privileged,
 or full-host rights. Host networking is required for Modbus TCP, LAN MQTT, and
 device discovery. The image runs Core as an unprivileged user; the root
 wrapper only prepares `/data`.
 
-Published beta images and their multi-arch manifest use keyless Cosign
+Published 3.x beta images and their multi-arch manifest use keyless Cosign
 signatures. Each beta also gets an SPDX JSON SBOM and GitHub attestation.

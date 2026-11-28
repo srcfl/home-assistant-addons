@@ -1,5 +1,21 @@
 # FTW (beta)
 
+FTW plans your battery, car charging and solar around electricity prices and
+controls them, here on your Home Assistant.
+
+> **Next steps**
+>
+> 1. **Start** the app. The first install builds it on your device and takes
+>    a few minutes.
+> 2. Choose **Open Web UI**.
+> 3. On the **Info** tab, turn on **Show in sidebar**, and **Watchdog** so
+>    Home Assistant restarts FTW if it stops answering.
+> 4. Follow FTW's setup guide: your home, then your devices.
+> 5. For Home Assistant entities, add the **Mosquitto broker** app and the
+>    **MQTT** integration Home Assistant offers, then restart FTW.
+>
+> The rest of this page explains each step.
+
 > **Beta / pilot.** New FTW 0.x on Home Assistant OS. Every FTW beta, and a
 > stable newer than the last beta, arrives as an app update, so expect
 > frequent updates. You choose when to install them. The alternative is FTW on a
@@ -13,9 +29,15 @@ CPU (amd64 or aarch64, for example Home Assistant Green). The package's
 SHA-256 is pinned in this repository and checked again against the release's
 own `.sha256` file. A bad download stops the install.
 
+**Why host network.** FTW uses Home Assistant's own network so it can search
+your home network for inverters, meters and chargers, find devices by their
+`.local` names, and let OCPP chargers dial in at Home Assistant's address
+(port 8887 by default). Host networking also lowers the app's protection
+rating in the store.
+
 ## 1. Stop any other FTW
 
-Only one FTW may control a site. If you still run the old 3.x app, also once
+Only one FTW may control a home. If you still run the old 3.x app, also once
 named **FTW (beta)** (version 3.x), take a backup, turn off **Start on boot**
 and **Watchdog**, and **Stop** it. Its settings and history do not move over.
 Stop FTW on any other computer too.
@@ -31,15 +53,16 @@ Stop FTW on any other computer too.
 3. Turn on **Watchdog**, so Home Assistant restarts FTW when its health check
    fails, then **Start**. **Start on boot** is on already.
 4. The **Log** tab should show `FTW starting`. A new install then shows
-   `no config found — starting setup wizard`; a configured site shows `HTTP API ready`.
+   `no config found — starting setup wizard`; a home already set up shows `HTTP API ready`.
 
 ## 3. Set up
 
-Choose **Open Web UI** inside Home Assistant. HA's administrator login manages
-access; no separate FTW password is needed. This also applies after updating
-an existing install with a saved FTW password. Your data stays in place.
-Turn on **Show in sidebar** on the app's **Info** tab to open FTW from Home
-Assistant's sidebar.
+Choose **Open Web UI** inside Home Assistant. A new install opens FTW's setup
+guide, which asks for your home and then your devices. HA's administrator
+login manages access; no separate FTW password is needed. This also applies
+after updating an existing install with a saved FTW password. Your data stays
+in place. Turn on **Show in sidebar** on the app's **Info** tab to open FTW
+from Home Assistant's sidebar.
 
 The direct LAN web port is closed. Keep a fixed HA address in your router so
 your devices keep finding it.
@@ -48,9 +71,12 @@ your devices keep finding it.
 
 In FTW, open **Settings → FTW app** and follow
 [Pair with one iPhone](https://github.com/srcfl/ftw/blob/master/docs/pairing.md).
-Use the pairing link or the QR. The phone then connects through FTW Cloud and
-needs nothing on your home network. The short code with a box address does not
-work in this app, since it needs FTW's own web port, which this app closes.
+Use the pairing link or the QR. Pairing turns on FTW Cloud and accepts its
+[terms](https://ftw.energy/privacy). The phone app then connects through FTW
+Cloud, so pairing and the phone app need internet; control runs on your Home
+Assistant. The phone needs nothing on your home network. The short code with a
+box address does not work in this app, since it needs FTW's own web port,
+which this app closes.
 If you used the webapp with an older FTW, remove it from the home screen and
 pair again.
 
@@ -58,8 +84,8 @@ pair again.
 
 FTW's values show up as Home Assistant entities over MQTT, with nothing to
 type. Add the **Mosquitto broker** app and the **MQTT** integration Home
-Assistant then offers, and start FTW after the broker. The app log shows
-`Home Assistant's MQTT broker is core-mosquitto:1883`. In FTW,
+Assistant then offers. If FTW was already running, restart it once. The app
+log shows `Home Assistant's MQTT broker is core-mosquitto:1883`. In FTW,
 **Settings → Integrations → Enabled** turns this off, and a broker you set
 there wins. FTW Core reads the broker from the app from [srcfl/ftw#2096](https://github.com/srcfl/ftw/pull/2096) on;
 older FTW needs the broker typed under **Settings → Integrations**.

@@ -1,7 +1,7 @@
 name: FTW (beta)
 version: "0.170.0-beta.1"
 slug: ftw-0x-beta
-description: New FTW 0.x beta, built on the device from the checksummed release package.
+description: Plans and runs your battery, car charging and solar around electricity prices. Beta.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x-beta
 arch:
   - amd64

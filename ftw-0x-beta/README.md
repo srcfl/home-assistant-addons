@@ -1,4 +1,4 @@
-# FTW (0.x beta)
+# FTW (beta)
 
 New FTW 0.x for Home Assistant OS, built on the device from the checksummed
 release package of a pinned FTW beta. Beta: run it on one site at a

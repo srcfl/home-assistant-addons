@@ -20,7 +20,9 @@ needed.
    `config.yaml` and `Dockerfile`, adds a changelog entry and opens a PR.
    Older release events cannot lower the pin. A pin also writes the `image:`
    line if the manifest lacks it, as the beta app's did while Supervisor
-   built it on the device.
+   built it on the device. For any release after `LAST_BUILT_ON_DEVICE` in
+   `scripts/native_pin.py`, `validate.py` refuses a manifest without it, so
+   a hand edit cannot quietly return to on-device builds.
 4. Trusted code from main recreates the diff from the public release receipt.
    Only the bot's three pin files may change. Nothing is built before this
    check passes.
@@ -40,8 +42,9 @@ needed.
    private image, or a missing signature stops publication.
 7. **The merge publishes the app version.** Supervisor pulls the image for the
    user's CPU. The workflow then runs Check on main, since a `GITHUB_TOKEN`
-   merge does not trigger push workflows; on main, Check verifies the images
-   of the pinned versions again. It creates no git tag or release.
+   merge does not trigger push workflows. On main, and once a day, Check
+   verifies the images of the pinned versions again. It creates no git tag
+   or release.
 
 Manual handoff: run **Pin new FTW 0.x release** (`sync-native.yml`) on `main`
 with an exact published tag, or leave the tag empty to select the newest
@@ -70,10 +73,12 @@ See [qualification](pilot/README.md).
 - Signing is keyless Cosign: GitHub's OIDC token for `sync-native.yml` on
   `main` gets a short-lived certificate, and the signature goes to the public
   Sigstore log. No one holds a signing key. Home Assistant's own builder and
-  the retired 3.x images sign the same way. Supervisor checks no signature; the pin
-  flow and Check on main do. To check one by hand:
+  the retired 3.x images sign the same way. Supervisor checks no signature;
+  the pin flow and Check on main do. Every workflow installs cosign v3.0.6;
+  check one by hand with the same release:
 
   ```sh
+  cosign version   # v3.0.6
   cosign verify \
     --certificate-identity https://github.com/srcfl/home-assistant-addons/.github/workflows/sync-native.yml@refs/heads/main \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -84,9 +89,9 @@ See [qualification](pilot/README.md).
   Installs, updates and restores pull it by that tag.
 - `docker buildx build --platform linux/arm64 --build-arg BUILD_ARCH=aarch64 --build-arg BUILD_VERSION=<version> ftw-0x-beta`
   builds the same app on your own machine (`linux/amd64` and `amd64` for the
-  other CPU). To try a recipe change in Home
-  Assistant, copy the app folder to `/addons` and delete its `image:` line;
-  Supervisor then builds the `Dockerfile` on the device.
+  other CPU). To try a recipe change in Home Assistant, copy the app folder
+  to `/addons` and delete its `image:` line; Supervisor then builds the
+  `Dockerfile` on the device.
 
 **Set up once.** The first image job creates the packages `amd64-ftw-0x` and
 `aarch64-ftw-0x` under srcfl, linked to this repository. GitHub may create
@@ -96,11 +101,13 @@ check that **Manage Actions access** gives this repository the **Write** role.
 Then re-run the failed job; the pushed images stay. No secret is needed: the
 image job asks for `packages: write` and `id-token: write` on `GITHUB_TOKEN`.
 
-**When the image step stops.** A re-run is safe: the image job keeps an image
-that an earlier run pushed, and publication verifies it. A version tag that
-exists but fails the check (signing failed after the push, or main changed
-the recipe while the pin waited) never reached users, since main does not pin
-it. Delete that package version on GitHub, then re-run the pin workflow.
+**When the image step stops.** Re-run the pin workflow. The image job never
+pushes a tag twice. If an earlier run pushed but failed to sign, the re-run
+signs that digest, but only when its labels show this version, recipe and
+pin commit (`native_image.py resume`). Publication then checks the image as
+always. A tag it still refuses (built from another commit, or main changed
+the recipe while the pin waited) never reached users, since main does not
+pin it. Delete that package version on GitHub, then re-run.
 
 ## 0.x stable
 

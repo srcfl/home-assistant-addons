@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Daily on main, so a pinned version's image that went missing, private or
+  # was retagged shows up without waiting for the next change. Only the
+  # repository job runs then; it holds the image check.
+  schedule:
+    - cron: "37 4 * * *"
 
 permissions:
   contents: read
@@ -45,12 +50,15 @@ jobs:
       # images. Steps, not a job, so pin branches skip them without a skipped job.
       - if: github.ref == 'refs/heads/main'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
       - name: Check the images of the versions main pins
         if: github.ref == 'refs/heads/main'
         run: python -m scripts.native_image verify-main
 
   home-assistant-lint:
     name: Home Assistant app lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.0
@@ -67,6 +75,7 @@ jobs:
 
   prepare-build:
     name: Prepare native build matrix
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}

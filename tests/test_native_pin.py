@@ -178,7 +178,29 @@ class PinFilesTest(AppCopies):
             native_pin.main(["x", "check"])
 
     def without_image(self, config):
+        """The manifest as on-device builds had it; today's pin counts as one."""
+        patcher = mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", native_pin.read_pin()[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
         config.write_text(re.sub(r"(?m)^image:.*\n", "", config.read_text()))
+
+    def test_a_later_pin_must_pull_the_image(self):
+        cfg = self.app / "config.yaml"
+        with mock.patch.object(native_pin, "asset", fake_assets(self.newer)):
+            native_pin.main(["x", "bump", self.newer])
+        stripped = re.sub(r"(?m)^image:.*\n", "", cfg.read_text())
+        cfg.write_text(stripped)
+        with self.assertRaisesRegex(SystemExit, "newer than .* built on the device; it must pull"):
+            native_pin.read_pin()
+        with mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", self.newer):
+            native_pin.read_pin()
+
+    def test_the_last_on_device_release_needs_no_image(self):
+        tag = native_pin.read_pin()[0]
+        cfg = self.app / "config.yaml"
+        cfg.write_text(re.sub(r"(?m)^image:.*\n", "", cfg.read_text()))
+        with mock.patch.object(native_pin, "LAST_BUILT_ON_DEVICE", tag):
+            self.assertEqual(native_pin.read_pin()[0], tag)
 
     def test_bump_names_the_prebuilt_image_once(self):
         cfg = self.app / "config.yaml"

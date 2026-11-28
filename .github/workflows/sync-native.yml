@@ -135,20 +135,27 @@ jobs:
       VERSION: ${{ needs.pin.outputs.version }}
       RECIPE: ${{ needs.pin.outputs.recipe }}
       APP_DIR: ${{ needs.pin.outputs.directory }}
+    # This job checks out the pin's head, yet every script it runs is main's:
+    # the pin job's prepare step (up_to_date, verify_change) proved that head
+    # is a main commit plus the trusted re-pin's lines in the pin files, and
+    # nothing else. Actions are pinned by commit, as this job can write
+    # packages and sign.
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.pin.outputs.head }}
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # A rerun keeps an image an earlier run pushed; publish verifies it.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
       - name: Look for this version's image
         id: found
         run: |
@@ -156,6 +163,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "${HEAD}"
           test "$(python -m scripts.native_image recipe "${APP_DIR}")" = "${RECIPE}"
           python -m scripts.native_image state "${ARCH}" "${VERSION}" >> "$GITHUB_OUTPUT"
+      # An earlier run may have pushed and then failed to sign. Sign that digest
+      # only if its labels show this version, recipe and pin commit.
+      - name: Sign an image an earlier run pushed
+        if: steps.found.outputs.digest != ''
+        run: python -m scripts.native_image resume "${ARCH}" "${VERSION}" "${RECIPE}" "${HEAD}"
       - name: Build from the pinned release package
         if: steps.found.outputs.digest == ''
         run: |
@@ -170,8 +182,6 @@ jobs:
       - name: Smoke the image under Supervisor-like conditions
         if: steps.found.outputs.digest == ''
         run: scripts/smoke_native.sh "$(python -m scripts.native_image ref "${ARCH}" "${VERSION}")"
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        if: steps.found.outputs.digest == ''
       - name: Push to a new tag and sign the pushed digest
         if: steps.found.outputs.digest == ''
         run: python -m scripts.native_image push "${ARCH}" "${VERSION}"
@@ -194,6 +204,8 @@ jobs:
           python-version: "3.12"
       # No registry login here: an image that needs one cannot reach users.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
       - name: Check, verify the images and merge
         env:
           GH_TOKEN: ${{ github.token }}

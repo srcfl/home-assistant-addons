@@ -47,6 +47,11 @@ UNLISTED = "unlisted.yaml"  # the stable manifest before the first stable
 # the device; the beta app does that until its first pin with an image.
 IMAGE = "ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x"
 IMAGE_LINE = f'image: "{IMAGE}"'
+# The last release the beta app built on the device. Every later pin writes
+# IMAGE, so a later release without it can only be a hand edit back to
+# on-device builds. If another pin lands before this rule does, raise this to
+# that release.
+LAST_BUILT_ON_DEVICE = "v0.170.1-beta.1"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
 UNRELEASED = "# Changelog\n\n## Unreleased\n\n"
@@ -191,6 +196,9 @@ def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str]
         return None, None, None
     if channel(tag) not in TAKES[name]:
         raise SystemExit(f"{directory.name} takes only {' and '.join(TAKES[name])} releases, not {tag}")
+    if pulled is None and tag_order(tag) > tag_order(LAST_BUILT_ON_DEVICE):
+        raise SystemExit(f"{directory.name} pins {tag}, newer than {LAST_BUILT_ON_DEVICE}, the last release "
+                         f"built on the device; it must pull {IMAGE}")
     if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     for arch, value in sums.items():

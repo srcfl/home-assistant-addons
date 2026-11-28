@@ -7,6 +7,10 @@
                                        the tag does not exist
   native_image.py push ARCH VERSION    push the local image to a tag that does
                                        not exist yet, then sign the pushed digest
+  native_image.py resume ARCH VERSION RECIPE HEAD
+                                       sign an image an earlier run pushed but
+                                       did not sign, if its labels show it was
+                                       built from this recipe and commit
   native_image.py verify VERSION [RECIPE]
                                        check every architecture's image for
                                        VERSION before a pin merges
@@ -38,11 +42,15 @@ PLATFORMS = {"amd64": "linux/amd64", "aarch64": "linux/arm64"}
 # digests build the same app.
 RECIPE = ("Dockerfile", "run.sh", "healthcheck.sh", "mqtt-service.sh")
 RECIPE_LABEL = "com.sourceful.ftw.recipe"
+REVISION_LABEL = "org.opencontainers.image.revision"
 # Keyless Cosign identity of the pin workflow, as it runs from main.
 SIGNER = ("https://github.com/srcfl/home-assistant-addons/"
           ".github/workflows/sync-native.yml@refs/heads/main")
 ISSUER = "https://token.actions.githubusercontent.com"
-ABSENT = ("manifest unknown", "name unknown", "not found")
+# The Cosign release every workflow installs; RELEASING.md names it too.
+COSIGN = "v3.0.6"
+# The registry's own errors for a missing tag or package.
+ABSENT = ("manifest unknown", "name unknown")
 ATTEMPTS = 3
 
 
@@ -82,13 +90,26 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, check=False, capture_output=True, text=True)
 
 
+def absent(reference: str, result: subprocess.CompletedProcess[str]) -> bool:
+    """Whether a failed inspect means that reference does not exist.
+
+    buildx reports a missing tag, or a package nobody has pushed to yet, as
+    "ERROR: <reference>: not found". Only that line for this exact reference,
+    or the registry's own error, counts: a "not found" about anything else (a
+    missing program, builder or file) must not read as "push a new tag".
+    """
+    detail = f"{result.stdout}\n{result.stderr}"
+    if any(marker in detail.lower() for marker in ABSENT):
+        return True
+    return any(line.strip().removeprefix("ERROR: ") == f"{reference}: not found" for line in detail.splitlines())
+
+
 def inspect(reference: str, part: str) -> dict | None:
     """The registry's manifest or image config for reference; None when absent."""
     result = run("docker", "buildx", "imagetools", "inspect", reference, "--format", f"{{{{json .{part}}}}}")
     if result.returncode == 0:
         return json.loads(result.stdout)
-    detail = f"{result.stdout}\n{result.stderr}".lower()
-    if any(marker in detail for marker in ABSENT):
+    if absent(reference, result):
         return None
     raise ImageError(f"could not read {reference}: {(result.stderr or result.stdout).strip()}")
 
@@ -151,6 +172,33 @@ def push(arch: str, version: str) -> str:
     return digest
 
 
+def resume(arch: str, version: str, want_recipe: str, head: str) -> str:
+    """Finish an image that an earlier run pushed but did not sign.
+
+    A run can push and then fail to sign; the re-run finds the tag and must
+    not push again. It signs that digest only if the labels the build step
+    wrote show this version, CPU, recipe and pin commit.
+    """
+    tag = ref(arch, version)
+    digest = state(arch, version)
+    if digest is None:
+        raise ImageError(f"{tag} does not exist")
+    pinned = digest_ref(arch, digest)
+    try:
+        signed(pinned)
+        return digest
+    except ImageError:
+        pass
+    found = labels(arch, pinned)
+    want = {"io.hass.version": version, "io.hass.arch": arch, RECIPE_LABEL: want_recipe, REVISION_LABEL: head}
+    wrong = sorted(key for key, value in want.items() if found.get(key) != value)
+    if wrong:
+        raise ImageError(f"{tag} is unsigned and its {', '.join(wrong)} do not match this pin; "
+                         "delete that package version, then re-run")
+    sign(pinned)
+    return digest
+
+
 def verify(version: str, want_recipe: str | None = None) -> dict[str, str]:
     """Every architecture's image for version, as Supervisor will pull it.
 
@@ -206,6 +254,8 @@ def main(argv: list[str]) -> int:
         print(f"digest={state(*args) or ''}")
     elif cmd == "push" and len(args) == 2:
         print(f"digest={push(*args)}")
+    elif cmd == "resume" and len(args) == 4:
+        print(f"digest={resume(*args)}")
     elif cmd == "verify" and len(args) in (1, 2):
         for arch, digest in verify(*args).items():
             print(f"ok: {ref(arch, args[0])} {digest}")

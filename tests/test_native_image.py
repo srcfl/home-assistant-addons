@@ -16,6 +16,7 @@ VERSION = "0.200.0-beta.1"
 DIGESTS = {"amd64": "sha256:" + "d" * 64, "aarch64": "sha256:" + "c" * 64}
 DIGEST = DIGESTS["amd64"]
 RECIPE = "e" * 64
+HEAD = "1" * 40
 
 
 def done(code=0, out="", err=""):
@@ -28,10 +29,12 @@ class Registry:
     def __init__(self, images=None, signed=True, private=False, push_ok=True):
         self.images = dict(images or {})  # tag -> (digest, labels)
         self.signed, self.private, self.push_ok = signed, private, push_ok
+        self.signatures = set()  # digests `cosign sign` signed here
         self.calls = []
 
-    def labels(self, arch, version=VERSION, recipe=RECIPE):
-        return {"io.hass.version": version, "io.hass.arch": arch, native_image.RECIPE_LABEL: recipe}
+    def labels(self, arch, version=VERSION, recipe=RECIPE, revision=HEAD):
+        return {"io.hass.version": version, "io.hass.arch": arch, native_image.RECIPE_LABEL: recipe,
+                native_image.REVISION_LABEL: revision}
 
     def add(self, arch, version=VERSION, **labels):
         self.images[native_image.ref(arch, version)] = (DIGESTS[arch], self.labels(arch, version, **labels))
@@ -57,8 +60,10 @@ class Registry:
             self.images[args[2]] = (DIGESTS[arch], self.labels(arch, args[2].rsplit(":", 1)[1]))
             return done()
         if args[:2] == ("cosign", "verify"):
-            return done(0 if self.signed else 1, err="" if self.signed else "no matching signatures")
+            ok = self.signed or args[-1].rsplit("@", 1)[1] in self.signatures
+            return done(0 if ok else 1, err="" if ok else "no matching signatures")
         if args[:2] == ("cosign", "sign"):
+            self.signatures.add(args[-1].rsplit("@", 1)[1])
             return done()
         raise AssertionError(args)
 
@@ -126,6 +131,57 @@ class ImageTest(unittest.TestCase):
         with self.assertRaisesRegex(native_image.ImageError, "never pushed twice"):
             native_image.push("aarch64", VERSION)
         self.assertFalse(any(call[:2] in (("docker", "push"), ("cosign", "sign")) for call in registry.calls))
+
+    def test_first_push_to_a_package_that_does_not_exist_yet(self):
+        # buildx's own words when neither the tag nor the package exists.
+        registry = self.registry(signed=False)
+        self.assertIsNone(native_image.state("amd64", VERSION))
+        self.assertEqual(native_image.push("amd64", VERSION), DIGESTS["amd64"])
+        self.assertIn(("docker", "push", native_image.ref("amd64", VERSION)), registry.calls)
+        self.assertEqual(registry.signatures, {DIGESTS["amd64"]})
+
+    def test_only_this_reference_not_found_means_absent(self):
+        tag = native_image.ref("amd64", VERSION)
+        for err in (f"ERROR: {tag}: not found", f"{tag}: not found\n", "manifest unknown",
+                    'errors:\nname unknown: repository name not known to registry'):
+            with self.subTest(err=err), mock.patch.object(native_image, "run", return_value=done(1, err=err)):
+                self.assertIsNone(native_image.state("amd64", VERSION))
+        for err in ('exec: "docker-buildx": executable file not found in $PATH',
+                    "ERROR: failed to find driver: not found",
+                    "ERROR: ghcr.io/srcfl/home-assistant-addons/amd64-ftw-0x:0.1.0-beta.1: not found",
+                    f"ERROR: {tag}-rc: not found", "not found"):
+            with self.subTest(err=err), mock.patch.object(native_image, "run", return_value=done(1, err=err)) as run:
+                with self.assertRaisesRegex(native_image.ImageError, "could not read"):
+                    native_image.state("amd64", VERSION)
+                with self.assertRaisesRegex(native_image.ImageError, "could not read"):
+                    native_image.push("amd64", VERSION)
+                self.assertFalse(any(call.args[:2] == ("docker", "push") for call in run.mock_calls))
+
+    def test_resume_signs_an_unsigned_image_of_this_pin(self):
+        registry = self.registry(signed=False)
+        registry.add("aarch64")
+        self.assertEqual(native_image.resume("aarch64", VERSION, RECIPE, HEAD), DIGESTS["aarch64"])
+        self.assertEqual(registry.signatures, {DIGESTS["aarch64"]})
+        self.assertFalse(any(call[:2] == ("docker", "push") for call in registry.calls))
+        registry.calls.clear()
+        self.assertEqual(native_image.resume("aarch64", VERSION, RECIPE, HEAD), DIGESTS["aarch64"])
+        self.assertFalse(any(call[:2] == ("cosign", "sign") for call in registry.calls), "signed once")
+
+    def test_resume_refuses_an_image_from_another_build(self):
+        for labels, wrong in ((dict(revision="2" * 40), "revision"), (dict(recipe="f" * 64), "recipe"),
+                              (dict(version="0.199.0-beta.1"), "io.hass.version")):
+            with self.subTest(wrong=wrong):
+                registry = self.registry(signed=False)
+                arch, version = "amd64", VERSION
+                registry.images[native_image.ref(arch, version)] = (DIGESTS[arch], registry.labels(arch, **{
+                    "version": labels.get("version", VERSION), "recipe": labels.get("recipe", RECIPE),
+                    "revision": labels.get("revision", HEAD)}))
+                with self.assertRaisesRegex(native_image.ImageError, f"unsigned and its .*{wrong}"):
+                    native_image.resume(arch, VERSION, RECIPE, HEAD)
+                self.assertEqual(registry.signatures, set())
+        self.registry()
+        with self.assertRaisesRegex(native_image.ImageError, "does not exist"):
+            native_image.resume("amd64", VERSION, RECIPE, HEAD)
 
     def test_a_failed_push_signs_nothing(self):
         registry = self.registry(push_ok=False)

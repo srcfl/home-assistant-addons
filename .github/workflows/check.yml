@@ -27,7 +27,7 @@ jobs:
       - run: python scripts/validate.py
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - run: python -m compileall -q scripts tests/fixtures
-      - run: shellcheck ftw/run.sh ftw/healthcheck.sh ftw-0x-beta/run.sh ftw-0x-beta/healthcheck.sh ftw-0x-beta/mqtt-service.sh scripts/smoke.sh scripts/smoke_native.sh scripts/restore_data_owner.sh scripts/test_restore_data_owner.sh
+      - run: shellcheck ftw/run.sh ftw/healthcheck.sh ftw-0x-beta/run.sh ftw-0x-beta/healthcheck.sh ftw-0x-beta/mqtt-service.sh ftw-0x/run.sh ftw-0x/healthcheck.sh ftw-0x/mqtt-service.sh scripts/smoke.sh scripts/smoke_native.sh scripts/restore_data_owner.sh scripts/test_restore_data_owner.sh
       - name: Check executable files
         run: |
           test -x ftw/run.sh
@@ -38,6 +38,8 @@ jobs:
           test -x tests/fixtures/core/app/ftw
           test -x ftw-0x-beta/run.sh
           test -x ftw-0x-beta/healthcheck.sh
+          test -x ftw-0x/run.sh
+          test -x ftw-0x/healthcheck.sh
           test -x scripts/smoke_native.sh
 
   home-assistant-lint:
@@ -50,6 +52,11 @@ jobs:
       - uses: frenck/action-addon-linter@v2.21
         with:
           path: ./ftw-0x-beta
+      # The stable app has a config.yaml only once it pins a stable release.
+      - if: hashFiles('ftw-0x/config.yaml') != ''
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./ftw-0x
 
   prepare-build:
     name: Prepare native build matrix
@@ -118,3 +125,15 @@ jobs:
             --tag "ftw-0x-ha-ci:${{ matrix.arch }}" ftw-0x-beta
       - name: Smoke runtime, restart, and persistence
         run: scripts/smoke_native.sh "ftw-0x-ha-ci:${{ matrix.arch }}"
+      # Steps, not a job: a skipped job would stop every beta pin from publishing.
+      - name: Build the stable app, once it pins a stable release
+        if: hashFiles('ftw-0x/config.yaml') != ''
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg "BUILD_ARCH=${{ matrix.arch }}" \
+            --build-arg "BUILD_VERSION=$(sed -n 's/^version: "\(.*\)"/\1/p' ftw-0x/config.yaml)" \
+            --tag "ftw-ha-ci:${{ matrix.arch }}" ftw-0x
+      - name: Smoke the stable app
+        if: hashFiles('ftw-0x/config.yaml') != ''
+        run: scripts/smoke_native.sh "ftw-ha-ci:${{ matrix.arch }}"

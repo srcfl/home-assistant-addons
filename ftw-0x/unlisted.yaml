@@ -1,0 +1,32 @@
+# The stable FTW app. Supervisor lists only a file named config.yaml, so this
+# manifest keeps the app out of the store until FTW publishes its first 0.x
+# stable. The first stable pin (sync-native.yml) writes config.yaml from it
+# and removes this file. Do not rename it by hand, and keep the pins empty.
+name: FTW
+version: ""
+slug: ftw-0x
+description: FTW stable, built on the device from the checksummed release package.
+url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x
+arch:
+  - amd64
+  - aarch64
+host_network: true
+ingress: true
+ingress_port: 18099
+# Supervisor defaults panel_admin to true. Keep FTW restricted to HA admins.
+panel_icon: mdi:solar-power-variant
+panel_title: FTW
+# Supervisor tells the app about Home Assistant's MQTT broker (mqtt-service.sh).
+services:
+  - mqtt:want
+backup: cold
+timeout: 60
+environment:
+  FTW_HA_INGRESS: "1"
+  FTW_SELFUPDATE_ENABLED: "0"
+  FTW_BUNDLE: home_assistant_addon
+  FTW_BUNDLE_VERSION: ""
+  FTW_IMAGE_TAG: ""
+# No `image:` key on purpose. Supervisor builds this Dockerfile on the device,
+# so nothing is pushed to a registry and merging to main is the only way a new
+# pin reaches users.

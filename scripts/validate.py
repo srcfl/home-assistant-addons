@@ -71,9 +71,41 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
     require(argument.start() < image_tag.start(), "Dockerfile must declare CORE_VERSION before FTW_IMAGE_TAG")
 
 
+# The stable app copies the beta app's recipe. Only these may differ.
+RECIPE = ("Dockerfile", "run.sh", "healthcheck.sh", "mqtt-service.sh")
+PIN_ARGS = re.compile(r"(?m)^(ARG FTW_(?:VERSION|SHA256_AMD64|SHA256_ARM64)=).*$")
+OWN_KEYS = {"name", "slug", "url", "version", "description"}
+# Slugs of the old line. An install may still hold one with old data, so no
+# listed app may use it again: Supervisor would offer that install the update.
+RETIRED_SLUGS = {"ftw", "ftw-beta"}
+PIN_ENV = {"FTW_BUNDLE_VERSION", "FTW_IMAGE_TAG"}
+
+
+def same_recipe(beta: pathlib.Path, stable: pathlib.Path) -> None:
+    """The stable app must build and run exactly as the beta app, bar the pins."""
+    for name in RECIPE:
+        want, got = (beta / name).read_text(encoding="utf-8"), (stable / name).read_text(encoding="utf-8")
+        if name == "Dockerfile":
+            want, got = PIN_ARGS.sub(r"\1", want), PIN_ARGS.sub(r"\1", got)
+        require(want == got, f"{stable.name}/{name} differs from {beta.name}/{name}; change both")
+
+    def settings(path: pathlib.Path) -> dict[str, Any]:
+        config = {k: v for k, v in load_yaml(path).items() if k not in OWN_KEYS}
+        config["environment"] = {k: v for k, v in (config.get("environment") or {}).items() if k not in PIN_ENV}
+        return config
+
+    require(
+        settings(native_pin.manifest(beta)) == settings(native_pin.manifest(stable)),
+        f"{stable.name} manifest settings differ from {beta.name}; change both",
+    )
+
+
 def validate_repository() -> None:
     if (ROOT / "ftw-0x-beta").is_dir():
         native_pin.read_pin()
+    if native_pin.STABLE_APP.is_dir():
+        native_pin.read_pin("stable")
+        same_recipe(native_pin.APP, native_pin.STABLE_APP)
     repository = load_yaml(ROOT / "repository.yaml")
     require(bool(repository.get("name")), "repository.yaml needs name")
     require(repository.get("url") == REPOSITORY_URL, "repository URL is wrong")
@@ -94,12 +126,19 @@ def validate_catalog() -> None:
         if path.suffix in (".yaml", ".yml", ".json")
         and not any(part.startswith(".") or part == "rootfs" for part in path.relative_to(ROOT).parts)
     }
+    # The 0.x stable app is listed only once it pins a stable release;
+    # native_pin.read_pin refuses a listed manifest without one. ftw/ is the
+    # retired 3.x build context and never carries a manifest.
+    allowed = {"ftw-0x-beta/config.yaml", "ftw-0x/config.yaml"}
     require(
-        manifests == {"ftw-0x-beta/config.yaml"},
-        f"only ftw-0x-beta may be listed in the app store, found {sorted(manifests)}",
+        manifests <= allowed and "ftw-0x-beta/config.yaml" in manifests,
+        f"only ftw-0x-beta and, once it pins a stable release, ftw-0x may be listed "
+        f"in the app store, found {sorted(manifests)}",
     )
-    config = load_yaml(ROOT / "ftw-0x-beta/config.yaml")
-    require("stage" not in config, "native beta must omit stage; Home Assistant has no beta stage")
+    for manifest in sorted(manifests):
+        config = load_yaml(ROOT / manifest)
+        require("stage" not in config, f"{manifest} must omit stage; Home Assistant has no beta stage")
+        require(config.get("slug") not in RETIRED_SLUGS, f"{manifest} must not reuse a retired slug")
 
 
 def validate_core_pin(core: Any, channel: str) -> None:
@@ -113,6 +152,28 @@ def validate_core_pin(core: Any, channel: str) -> None:
     require(DIGEST.fullmatch(str(core.get("digest", ""))) is not None, f"{channel} Core digest is invalid")
     require(COMMIT.fullmatch(str(core.get("commit", ""))) is not None, f"{channel} Core commit is invalid")
     require(core.get("release") == f"{CORE_RELEASES}{version}", f"{channel} Core release URL is wrong")
+
+
+def validate_native(compat: dict[str, Any]) -> None:
+    """The 0.x apps: which slug and folder take which channel."""
+    native = compat.get("native")
+    require(isinstance(native, dict), "compatibility native must be an object")
+    for name in ("beta", "stable"):
+        block = native.get(name)
+        require(isinstance(block, dict), f"compatibility native.{name} must be an object")
+        require(block.get("add_on") == native_pin.SLUGS[name], f"native {name} app must be {native_pin.SLUGS[name]}")
+        require(
+            block.get("directory") == native_pin.app_dir(name).name,
+            f"native {name} app must live in {native_pin.app_dir(name).name}",
+        )
+        require(
+            block.get("takes") == list(native_pin.TAKES[name]),
+            f"native {name} app must take {list(native_pin.TAKES[name])}",
+        )
+    require(native["stable"].get("listed_from") == f"v0.{native_pin.MIN_MINOR}.0",
+            f"the stable app is listed from v0.{native_pin.MIN_MINOR}.0")
+    retired = set(native.get("retired_slugs") or ())
+    require(retired == RETIRED_SLUGS, f"retired slugs must be {sorted(RETIRED_SLUGS)}")
 
 
 def validate_common(compat: dict[str, Any]) -> None:
@@ -262,6 +323,7 @@ def main() -> int:
     try:
         validate_repository()
         compat = load_yaml(ROOT / "compatibility.yaml")
+        validate_native(compat)
         validate_common(compat)
         if args.channel == "auto":
             channels = validate_all(compat)

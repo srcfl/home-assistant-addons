@@ -5,6 +5,7 @@
 - FTW opens inside Home Assistant, behind Home Assistant's login. No separate FTW password is needed, also after an update from a version with one.
 - FTW's own web port 8080 on the home network is closed. Pair the FTW app with the link or QR; it connects through FTW Cloud.
 - The app is now named **FTW (beta)**.
+- It also takes an FTW stable release that is newer than the last beta, as FTW's beta channel does.
 - FTW finds Home Assistant's MQTT broker (the Mosquitto broker app), so its entities appear without typing a broker. Needs FTW Core with [srcfl/ftw#2096](https://github.com/srcfl/ftw/pull/2096).
 
 ## 0.169.1-beta.1

@@ -5,6 +5,27 @@ core:
   image: ghcr.io/srcfl/ftw
   mode: home_assistant_add_on
   self_update: false
+# The 0.x apps. Their pins live in each app's manifest and Dockerfile, and only
+# sync-native.yml moves them. The beta app follows Core's beta channel: the
+# highest release, beta or stable. The stable app keeps its manifest as
+# unlisted.yaml, out of the store, until it pins the first 0.x stable; that
+# pin writes its config.yaml.
+native:
+  beta:
+    add_on: ftw-0x-beta
+    directory: ftw-0x-beta
+    takes: [beta, stable]
+  stable:
+    add_on: ftw-0x
+    directory: ftw-0x
+    takes: [stable]
+    listed_from: v0.131.0
+  # Old-line slugs. Installs may still hold them with old data, so no 0.x
+  # app reuses them. ftw was listed as 0.1.0-beta.1 (Core v1.10.0-beta.1)
+  # from 22 July to 18 September 2026.
+  retired_slugs: [ftw, ftw-beta]
+# The blocks below are the retired 3.x record. Its stable app `ftw` was never
+# promoted; that slug stays retired.
 beta:
   add_on: ftw-beta
   version: 3.8.0-beta.1

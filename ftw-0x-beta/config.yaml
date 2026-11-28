@@ -1,4 +1,4 @@
-name: FTW (0.x beta)
+name: FTW (beta)
 version: "0.169.1-beta.1"
 slug: ftw-0x-beta
 description: New FTW 0.x beta, built on the device from the checksummed release package.
@@ -7,19 +7,18 @@ arch:
   - amd64
   - aarch64
 host_network: true
-ports:
-  8080/tcp: 8080
-ports_description:
-  8080/tcp: FTW web interface and API
-# Ingress serves only a launcher page (panel/), so FTW can be pinned to Home
-# Assistant's sidebar. FTW refuses to be framed and stays on port 8080.
 ingress: true
-ingress_port: 8093
+ingress_port: 18099
+# Supervisor defaults panel_admin to true. Keep FTW restricted to HA admins.
 panel_icon: mdi:solar-power-variant
 panel_title: FTW
+# Supervisor tells the app about Home Assistant's MQTT broker (mqtt-service.sh).
+services:
+  - mqtt:want
 backup: cold
 timeout: 60
 environment:
+  FTW_HA_INGRESS: "1"
   FTW_SELFUPDATE_ENABLED: "0"
   FTW_BUNDLE: home_assistant_addon
   FTW_BUNDLE_VERSION: "0.169.1-beta.1"

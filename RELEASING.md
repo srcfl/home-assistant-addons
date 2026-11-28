@@ -3,7 +3,7 @@
 ## Current 0.x beta
 
 Sourceful maintains this repository. Fredrik owns FTW's product direction.
-The app slug is `ftw-0x-beta`; its name is **FTW (0.x beta)**.
+The app slug is `ftw-0x-beta`; its name is **FTW (beta)**.
 Home Assistant has no `beta` stage. Keep the beta name and version, and omit
 `stage` so the store does not add an Experimental flag. This does not promote
 FTW to stable.
@@ -62,4 +62,4 @@ The old `ftw` stable app has no manifest and was never published.
 Removing a store entry does not uninstall an existing app or delete its data.
 HA may flag the old app as removed from its repository. Keep its backup and
 published images for recovery. New installs use
-[FTW (0.x beta)](ftw-0x-beta/DOCS.md), or the separate-host route in the README.
+[FTW (beta)](ftw-0x-beta/DOCS.md), or the separate-host route in the README.

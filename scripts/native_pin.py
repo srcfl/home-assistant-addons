@@ -26,6 +26,7 @@ TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)-beta\.(\d+)$")
 MIN_MINOR = 131  # the new 0.x line starts at v0.131.0-beta.1
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
+UNRELEASED = "# Changelog\n\n## Unreleased\n\n"
 PAUSE_S = 2  # before the second attempt; twice that before the third
 
 
@@ -146,9 +147,15 @@ def main(argv: list[str]) -> int:
         write_pin(tag, sums)
         if tag != current:
             changelog = APP / "CHANGELOG.md"
-            entry = (f"## {tag[1:]}\n\n"
-                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n\n")
-            changelog.write_text(changelog.read_text().replace("# Changelog\n\n", "# Changelog\n\n" + entry, 1))
+            notes = changelog.read_text()
+            entry = (f"# Changelog\n\n## {tag[1:]}\n\n"
+                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n")
+            # App changes merged since the last pin ship with this one.
+            if notes.startswith(UNRELEASED):
+                notes = notes.replace(UNRELEASED, entry, 1)
+            else:
+                notes = notes.replace("# Changelog\n\n", entry + "\n", 1)
+            changelog.write_text(notes)
         read_pin()
         print(f"pinned {tag}")
     else:

@@ -15,9 +15,9 @@ ARG FTW_SHA256_ARM64=13f1227b9e2b96601fa6dce0623b70ff929ec8c3bfab17897ef9584e691
 
 # ca-certificates/curl fetch the package; tzdata keeps plan windows right;
 # wget is what healthcheck.sh uses; setpriv (util-linux) drops to uid 100;
-# busybox httpd serves the sidebar panel.
+# jq reads Supervisor's MQTT broker in mqtt-service.sh.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata wget util-linux busybox \
+    && apt-get install -y --no-install-recommends ca-certificates curl tzdata wget util-linux jq \
     && rm -rf /var/lib/apt/lists/*
 
 # The expected hash is pinned above and must also equal the release's
@@ -43,13 +43,12 @@ RUN set -eu; \
     ln -s /app/ftw-cli /usr/local/bin/ftw; \
     chown -R 0:0 /app
 
-COPY run.sh healthcheck.sh /usr/local/bin/
-COPY panel/index.html /app/panel/
-COPY panel/httpd.conf /etc/ftw-panel.conf
+COPY run.sh healthcheck.sh mqtt-service.sh /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/run.sh /usr/local/bin/healthcheck.sh \
-    && chmod 0644 /app/panel/index.html /etc/ftw-panel.conf
+    && chmod 0644 /usr/local/bin/mqtt-service.sh
 
 ENV HOME=/data \
+    FTW_HA_INGRESS=1 \
     FTW_SELFUPDATE_ENABLED=0 \
     FTW_BUNDLE=home_assistant_addon \
     FTW_BUNDLE_VERSION=${BUILD_VERSION} \
@@ -67,7 +66,7 @@ LABEL io.hass.type="app" \
     com.sourceful.ftw.update-owner="home_assistant_supervisor"
 
 WORKDIR /data
-EXPOSE 8080
+EXPOSE 18099
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=8 \
     CMD ["/usr/local/bin/healthcheck.sh"]
 ENTRYPOINT ["/usr/local/bin/run.sh"]

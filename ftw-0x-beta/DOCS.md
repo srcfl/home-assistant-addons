@@ -1,4 +1,4 @@
-# FTW (0.x beta)
+# FTW (beta)
 
 > **Beta / pilot.** New FTW 0.x on Home Assistant OS. Reviewed FTW beta pins
 > arrive as app updates, so expect frequent updates. You choose when to install
@@ -15,37 +15,54 @@ own `.sha256` file. A bad download stops the install.
 
 ## 1. Stop any other FTW
 
-Only one FTW may control a site. If you run the old **FTW (beta)** app, take a
-backup, turn off **Start on boot** and **Watchdog**, and **Stop** it. Its
-settings and history do not move over. Stop FTW on any other computer too.
+Only one FTW may control a site. If you still run the old 3.x app, also once
+named **FTW (beta)** (version 3.x), take a backup, turn off **Start on boot**
+and **Watchdog**, and **Stop** it. Its settings and history do not move over.
+Stop FTW on any other computer too.
 
 ## 2. Install
 
-1. **Settings → Apps → Install app → ⋮ → Repositories**, add
+1. [![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fsrcfl%2Fhome-assistant-addons)
+
+   Or open **Settings → Apps → Install app → ⋮ → Repositories** and add
    `https://github.com/srcfl/home-assistant-addons`.
-2. Open **FTW (0.x beta)** and choose **Install**. The first build downloads
-   packages and can take several minutes; wait for it to finish.
-3. Turn on **Start on boot** and **Watchdog**, then **Start**.
+2. Open **FTW (beta)** (version 0.x) and choose **Install**. The first build
+   downloads packages and can take several minutes; wait for it to finish.
+3. Turn on **Watchdog**, so Home Assistant restarts FTW when its health check
+   fails, then **Start**. **Start on boot** is on already.
 4. The **Log** tab should show `FTW starting`. A new install then shows
    `no config found — starting setup wizard`; a configured site shows `HTTP API ready`.
 
 ## 3. Set up
 
-Choose **Open web UI**, then **Open FTW**, and follow the setup wizard. Give
-Home Assistant a fixed address in your router so devices and apps keep finding
-it. FTW opens in a new tab directly on your home network, port 8080; it does
-not run inside Home Assistant's frame. Remote access uses a paired FTW client.
+Choose **Open Web UI** inside Home Assistant. HA's administrator login manages
+access; no separate FTW password is needed. This also applies after updating
+an existing install with a saved FTW password. Your data stays in place.
+Turn on **Show in sidebar** on the app's **Info** tab to open FTW from Home
+Assistant's sidebar.
 
-To pin FTW to Home Assistant's sidebar, turn on **Show in sidebar** on the
-app's **Info** tab. The sidebar entry opens the same page with the
-**Open FTW** button.
+The direct LAN web port is closed. Keep a fixed HA address in your router so
+your devices keep finding it.
 
 ## 4. FTW app and webapp
 
-In FTW: **Settings → FTW app**, then follow
+In FTW, open **Settings → FTW app** and follow
 [Pair with one iPhone](https://github.com/srcfl/ftw/blob/master/docs/pairing.md).
+Use the pairing link or the QR. The phone then connects through FTW Cloud and
+needs nothing on your home network. The short code with a box address does not
+work in this app, since it needs FTW's own web port, which this app closes.
 If you used the webapp with an older FTW, remove it from the home screen and
 pair again.
+
+## 5. FTW in Home Assistant
+
+FTW's values show up as Home Assistant entities over MQTT, with nothing to
+type. Add the **Mosquitto broker** app and the **MQTT** integration Home
+Assistant then offers, and start FTW after the broker. The app log shows
+`Home Assistant's MQTT broker is core-mosquitto:1883`. In FTW,
+**Settings → Integrations → Enabled** turns this off, and a broker you set
+there wins. FTW Core reads the broker from the app from [srcfl/ftw#2096](https://github.com/srcfl/ftw/pull/2096) on;
+older FTW needs the broker typed under **Settings → Integrations**.
 
 ## Updates and backup
 
@@ -62,8 +79,8 @@ pair again.
 |---|---|
 | Not in the store | Check the repository URL; **⋮ → Check for updates**; reload. |
 | Install fails | **Settings → System → Logs → Supervisor**. Download/checksum errors: try again later. |
-| Web UI does not open | Read the app log. Port 8080 must be free. |
-| FTW app says the box is too old | You installed the old **FTW (beta)**; install **FTW (0.x beta)**. |
+| Web UI does not open | Read the app log. Open it through HA. Ingress port 18099 must be free. |
+| FTW app says the box is too old | You run the old 3.x app; install **FTW (beta)** version 0.x from this repository. |
 
 Report app issues [here](https://github.com/srcfl/home-assistant-addons/issues),
 FTW issues [here](https://github.com/srcfl/ftw/issues), or ask in

@@ -10,8 +10,10 @@ For the physical Green pilot:
 
 1. Back up and stop the old FTW, including Start on boot and Watchdog. Confirm
    it stays stopped after a host restart.
-2. Add the repository URL and install **FTW (0.x beta)**. Keep Auto update off.
-   Check setup, the direct web UI and restart through both FTW and Home Assistant.
+2. Add the repository URL and install **FTW (beta)**. Keep Auto update off.
+   Check setup and settings inside Home Assistant with its login, the sidebar
+   entry, restart through both FTW and Home Assistant, and that FTW's entities
+   appear with the Mosquitto broker app.
 3. Connect the site meter and devices. Verify fresh measurements, the site limits,
    planner operation and physical response before claiming control works.
 4. Pair the intended FTW phone/web client. Check local operation when the

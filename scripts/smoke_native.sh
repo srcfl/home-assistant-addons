@@ -2,13 +2,16 @@
 # Smoke for ftw-0x-beta under Supervisor-like conditions, against the real
 # FTW 0.x package (scripts/smoke.sh targets the 3.x fixture, whose empty
 # config real 0.x Core rejects).
-#   host network, /data volume with options.json, Docker init, uid 100:101,
+#   Supervisor-addressed ingress, /data volume with options.json, Docker init, uid 100:101,
 #   setup wizard healthy, valid config -> /api/health, restart persistence,
 #   cold backup (stop, tar /data, restore into a fresh volume), Core death
-#   ends the container.
+#   ends the container. Supervisor here offers no MQTT broker, so the
+#   broker lookup must fail and Core must start anyway.
 set -Eeuo pipefail
 image=${1:?usage: smoke_native.sh IMAGE}
-port=${FTW_SMOKE_PORT:-8080}
+port=18099
+network="ftw0x-ingress-${RANDOM}"
+proxy="ftw0x-supervisor-${RANDOM}"
 name="ftw0x-smoke-${RANDOM}"; vol="ftw0x-data-${RANDOM}"; vol2="${vol}-restored"
 tmp="$(mktemp -d)"
 log() { printf 'smoke-native: %s\n' "$*"; }
@@ -17,6 +20,8 @@ cleanup() {
   local s=$?
   if [[ $s -ne 0 ]]; then docker logs "${name}" 2>&1 | tail -20 >&2 || true; fi
   docker rm -f "${name}" >/dev/null 2>&1 || true
+  docker rm -f "${proxy}" >/dev/null 2>&1 || true
+  docker network rm "${network}" >/dev/null 2>&1 || true
   docker volume rm "${vol}" "${vol2}" >/dev/null 2>&1 || true
   rm -rf "${tmp}"
 }
@@ -51,7 +56,9 @@ log "restore repair refuses links and nested mounts"
 run() {
   local -a docker_args
   read -r -a docker_args <<< "${FTW_SMOKE_DOCKER_ARGS:-}"
-  docker run -d --init "${docker_args[@]}" --network host --name "${name}" -v "$1:/data" "${image}" >/dev/null
+  docker run -d --init "${docker_args[@]}" --network "${network}" --ip 172.30.33.10 \
+    --add-host supervisor:172.30.32.2 -e SUPERVISOR_TOKEN=smoke-token \
+    --name "${name}" -v "$1:/data" "${image}" >/dev/null
 }
 healthy() {
   for _ in $(seq 1 90); do
@@ -61,25 +68,45 @@ healthy() {
   done
   fail "not healthy in 90s"
 }
-http() { curl -fsSL -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}$1"; }
+request() {
+  local path=$1; shift
+  docker exec "${proxy}" curl -fsS -m 5 \
+    -H 'X-Ingress-Path: /api/hassio_ingress/smoke' -H 'X-Remote-User-Id: smoke-owner' \
+    "$@" "http://172.30.33.10:${port}${path}"
+}
+http() { request "$1" -o /dev/null -w '%{http_code}'; }
+
+docker network create --subnet 172.30.32.0/23 "${network}" >/dev/null
+docker run -d --no-healthcheck --network "${network}" --ip 172.30.32.2 \
+  --name "${proxy}" --entrypoint sleep "${image}" infinity >/dev/null
 
 docker volume create "${vol}" >/dev/null
 # Supervisor writes options.json into /data as root before start.
 docker run --rm -v "${vol}:/data" --entrypoint sh "${image}" -c 'echo "{}" >/data/options.json'
 run "${vol}"; healthy
 log "fresh install healthy (setup wizard); /setup -> $(http /setup)"
-docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon'
+docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon; test "$FTW_HA_INGRESS" = 1'
+# Capture before grep: with pipefail, `cmd | grep -q` fails when grep stops
+# reading early and cmd dies of SIGPIPE.
+logs="$(docker logs "${name}" 2>&1)"
+grep -q 'Home Assistant has no MQTT broker' <<<"${logs}" || fail "MQTT broker lookup did not report"
 owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && stat -c %u:%g $p; done' | awk 'NR==1')"
 [[ "${owner}" == 100:101 ]] || fail "Core runs as ${owner}, want 100:101"
 log "Core runs as ${owner}"
-[[ "$(http /)" == 200 ]] || fail "web UI root"
-log "web UI / -> 200"
-# The sidebar panel answers only Supervisor's ingress proxy (172.30.32.2).
-panel="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8093/")" || true
-[[ "${panel}" == 403 ]] || fail "sidebar panel from 127.0.0.1 -> ${panel}, want 403"
-panel_owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "httpd -p 8093" && stat -c %u:%g $p; done; true' | awk 'NR==1')"
-[[ "${panel_owner}" == 100:101 ]] || fail "sidebar panel runs as ${panel_owner:-nothing}, want 100:101"
-log "sidebar panel refuses non-Supervisor clients"
+core_env="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && tr "\\0" "\\n" <$p/environ; done; true')"
+[[ "${core_env}" != *FTW_HA_MQTT_HOST=* ]] || fail "Core got an MQTT broker that Supervisor never offered"
+log "no broker offered: Core started without one"
+[[ "$(http /)" == 302 ]] || fail "setup redirect"
+headers="$(request / -D - -o /dev/null | tr -d '\r')"
+grep -Fqi 'location: /api/hassio_ingress/smoke/setup' <<<"${headers}" || fail "redirect escaped HA"
+log "web UI through Supervisor -> 200"
+# Copying ingress headers from a different peer must not open the UI.
+blocked=$(docker exec "${name}" curl -s -m 5 -o /dev/null -w '%{http_code}' \
+  -H 'X-Ingress-Path: /api/hassio_ingress/smoke' -H 'X-Remote-User-Id: forged' \
+  "http://127.0.0.1:${port}/setup")
+[[ "$blocked" == 403 ]] || fail "loopback headers bypassed ingress"
+setup="$(request /setup)"
+grep -q '/api/hassio_ingress/smoke/setup.js' <<<"${setup}" || fail "setup asset URL escaped HA"
 
 docker exec -u 100:101 "${name}" sh -c 'cat >/data/config.yaml <<Y
 site:
@@ -101,7 +128,7 @@ worker=$(docker exec -u 100:101 "${name}" sh -c 'printf '\''{"type":"handshake"}
 [[ "${worker}" == *'"protocol_version":1'* ]] || fail "Energyplan handshake: ${worker}"
 log "bundled Energyplan worker answered its handshake"
 # Core must restart itself in this bundle even without Supervisor's watchdog.
-curl -fsS -m 5 -X POST "http://127.0.0.1:${port}/api/restart" >/dev/null
+request /api/restart -X POST >/dev/null
 sleep 2
 healthy
 [[ "$(http /api/health)" == 200 ]] || fail "/api/health after FTW restart"

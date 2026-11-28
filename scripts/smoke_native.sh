@@ -86,7 +86,10 @@ docker run --rm -v "${vol}:/data" --entrypoint sh "${image}" -c 'echo "{}" >/dat
 run "${vol}"; healthy
 log "fresh install healthy (setup wizard); /setup -> $(http /setup)"
 docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon; test "$FTW_HA_INGRESS" = 1'
-docker logs "${name}" 2>&1 | grep -q 'Home Assistant has no MQTT broker' || fail "MQTT broker lookup did not report"
+# Capture before grep: with pipefail, `cmd | grep -q` fails when grep stops
+# reading early and cmd dies of SIGPIPE.
+logs="$(docker logs "${name}" 2>&1)"
+grep -q 'Home Assistant has no MQTT broker' <<<"${logs}" || fail "MQTT broker lookup did not report"
 owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && stat -c %u:%g $p; done' | awk 'NR==1')"
 [[ "${owner}" == 100:101 ]] || fail "Core runs as ${owner}, want 100:101"
 log "Core runs as ${owner}"
@@ -94,14 +97,16 @@ core_env="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/pr
 [[ "${core_env}" != *FTW_HA_MQTT_HOST=* ]] || fail "Core got an MQTT broker that Supervisor never offered"
 log "no broker offered: Core started without one"
 [[ "$(http /)" == 302 ]] || fail "setup redirect"
-request / -D - -o /dev/null | tr -d '\r' | grep -Fqi 'location: /api/hassio_ingress/smoke/setup' || fail "redirect escaped HA"
+headers="$(request / -D - -o /dev/null | tr -d '\r')"
+grep -Fqi 'location: /api/hassio_ingress/smoke/setup' <<<"${headers}" || fail "redirect escaped HA"
 log "web UI through Supervisor -> 200"
 # Copying ingress headers from a different peer must not open the UI.
 blocked=$(docker exec "${name}" curl -s -m 5 -o /dev/null -w '%{http_code}' \
   -H 'X-Ingress-Path: /api/hassio_ingress/smoke' -H 'X-Remote-User-Id: forged' \
   "http://127.0.0.1:${port}/setup")
 [[ "$blocked" == 403 ]] || fail "loopback headers bypassed ingress"
-request /setup | grep -q '/api/hassio_ingress/smoke/setup.js' || fail "setup asset URL escaped HA"
+setup="$(request /setup)"
+grep -q '/api/hassio_ingress/smoke/setup.js' <<<"${setup}" || fail "setup asset URL escaped HA"
 
 docker exec -u 100:101 "${name}" sh -c 'cat >/data/config.yaml <<Y
 site:

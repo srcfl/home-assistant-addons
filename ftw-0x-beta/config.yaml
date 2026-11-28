@@ -12,7 +12,6 @@ ingress_port: 18099
 # Supervisor defaults panel_admin to true. Keep FTW restricted to HA admins.
 panel_icon: mdi:solar-power-variant
 panel_title: FTW
-homeassistant: "2026.10.2"
 # Supervisor tells the app about Home Assistant's MQTT broker (mqtt-service.sh).
 services:
   - mqtt:want

@@ -2,8 +2,9 @@
 
 # FTW 0.x for Home Assistant, built from the same checksummed release package
 # the native installer and deploy/docker in srcfl/ftw use. Nothing is compiled.
-# Supervisor builds this on the device (config.yaml has no `image:`), so the
-# app never depends on a registry image.
+# The pin workflow builds this into the signed image that config.yaml's
+# `image:` names, so Home Assistant only downloads it. `docker build` of this
+# folder gives the same app locally.
 FROM docker.io/library/debian:trixie-slim
 
 ARG BUILD_ARCH

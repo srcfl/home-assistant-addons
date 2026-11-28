@@ -1,14 +1,16 @@
 """The publisher must reject code changes even when a pin's checks are green."""
+import contextlib
 import copy
+import io
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from scripts import native_pin, native_publish as publish
+from scripts import native_image, native_pin, native_publish as publish
 
 TAG = "v0.160.0-beta.1"
 SUMS = {"amd64": "a" * 64, "arm64": "b" * 64}
@@ -108,10 +110,14 @@ class PublishTest(unittest.TestCase):
                     publish.verify_change(base, git("rev-parse", "HEAD"), newer)
             os.chdir(previous)
 
-    def test_merge_requires_fresh_head_and_base_and_dispatches_main_check(self):
+    def published(self, image_error=None):
+        """Run publish("24") against a fake GitHub; return its api paths and commands."""
         pr = pull()
         pr["head"]["sha"] = "head"
+        paths = []
+
         def responses(path, *args):
+            paths.append(path)
             if path == "pulls/24": return copy.deepcopy(pr)
             if path == "git/ref/heads/main": return {"object": {"sha": "base"}}
             if path == "pulls/24/merge": return {"merged": True, "sha": "merged"}
@@ -119,12 +125,68 @@ class PublishTest(unittest.TestCase):
         with patch.dict(os.environ, GITHUB_REPOSITORY=publish.REPOSITORY), \
                 patch.object(publish, "api", side_effect=responses) as api, \
                 patch.object(publish, "command", return_value="base") as command, \
-                patch.object(publish, "verify_change") as verify, patch.object(publish, "run_check") as check:
-            publish.publish("24")
-            verify.assert_called_once_with("base", "head", TAG)
-            check.assert_called_once_with(pr["head"]["ref"], "head")
-            api.assert_any_call("pulls/24/merge", "--method", "PUT", "-f", "sha=head", "-f", "merge_method=squash")
-            command.assert_any_call("gh", "workflow", "run", "check.yml", "--repo", publish.REPOSITORY, "--ref", "main")
+                patch.object(publish, "verify_change", return_value={"ftw-0x-beta"}) as verify, \
+                patch.object(publish, "image_recipe", return_value=("recipe", "ftw-0x-beta")) as recipe, \
+                patch.object(publish.native_image, "verify", side_effect=image_error) as image, \
+                patch.object(publish, "run_check") as check, contextlib.redirect_stdout(io.StringIO()):
+            error = None
+            try:
+                publish.publish("24")
+            except ValueError as raised:
+                error = raised
+        verify.assert_called_with("base", "head", TAG)
+        check.assert_called_once_with(pr["head"]["ref"], "head")
+        recipe.assert_called_with("head", {"ftw-0x-beta"})
+        image.assert_called_once_with(TAG[1:], "recipe")
+        return api, command, paths, error
+
+    def test_merge_requires_fresh_head_and_base_and_dispatches_main_check(self):
+        api, command, _, error = self.published()
+        self.assertIsNone(error)
+        api.assert_any_call("pulls/24/merge", "--method", "PUT", "-f", "sha=head", "-f", "merge_method=squash")
+        command.assert_any_call("gh", "workflow", "run", "check.yml", "--repo", publish.REPOSITORY, "--ref", "main")
+
+    def test_a_pin_without_its_image_never_merges(self):
+        main_check = call("gh", "workflow", "run", "check.yml", "--repo", publish.REPOSITORY, "--ref", "main")
+        for reason in ("does not exist", "cannot be pulled without a login", "no signature", "another recipe"):
+            with self.subTest(reason=reason):
+                _, command, paths, error = self.published(native_image.ImageError(reason))
+                self.assertIsInstance(error, native_image.ImageError)
+                self.assertNotIn("pulls/24/merge", paths)
+                self.assertNotIn(main_check, command.mock_calls)
+
+    def test_prepare_verifies_the_pin_before_naming_its_image(self):
+        pr = pull()
+        pr["head"]["sha"] = "head"
+
+        def responses(path, *args):
+            if path == "pulls/24": return copy.deepcopy(pr)
+            if path == "git/ref/heads/main": return {"object": {"sha": "base"}}
+            raise AssertionError(path)
+        with patch.dict(os.environ, GITHUB_REPOSITORY=publish.REPOSITORY), \
+                patch.object(publish, "api", side_effect=responses), \
+                patch.object(publish, "command", return_value="base"), \
+                patch.object(publish, "verify_change", return_value={"ftw-0x-beta"}) as verify, \
+                patch.object(publish, "image_recipe", return_value=("recipe", "ftw-0x-beta")) as recipe:
+            self.assertEqual(publish.prepare("24"), {"head": "head", "version": TAG[1:], "recipe": "recipe",
+                                                     "directory": "ftw-0x-beta"})
+        verify.assert_called_once_with("base", "head", TAG)
+        recipe.assert_called_once_with("head", {"ftw-0x-beta"})
+        with patch.dict(os.environ, GITHUB_REPOSITORY="someone/fork"), patch.object(publish, "api") as api:
+            with self.assertRaises(ValueError):
+                publish.prepare("24")
+            api.assert_not_called()
+
+    def test_prepare_prints_only_outputs(self):
+        def noisy(number):
+            print("pinned ftw-0x-beta to v0.1.0-beta.1")
+            return {"head": "h", "version": "v", "recipe": "r", "directory": "d"}
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(publish, "prepare", side_effect=noisy), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            publish.main(["native_publish.py", "prepare", "24"])
+        self.assertEqual(out.getvalue(), "head=h\nversion=v\nrecipe=r\ndirectory=d\n")
+        self.assertIn("pinned", err.getvalue())
 
     def test_refuses_other_repository_before_any_commands(self):
         with patch.dict(os.environ, GITHUB_REPOSITORY="someone/fork"), patch.object(publish, "api") as api:
@@ -188,6 +250,26 @@ class StablePublishTest(unittest.TestCase):
         git("commit", "-q", "-m", "drop the beta half")
         with self.assertRaises(ValueError):
             publish.verify_change(self.base, git("rev-parse", "HEAD"), self.above)
+
+    def test_the_apps_a_pin_moves_share_one_image(self):
+        head = self.pin(self.above)
+        moved = publish.verify_change(self.base, head, self.above)
+        self.assertEqual(moved, {"ftw-0x", "ftw-0x-beta"})
+        recipe, directory = publish.image_recipe(head, moved)
+        self.assertEqual(directory, "ftw-0x-beta")
+        self.assertEqual(recipe, native_image.recipe_of(self.work / "ftw-0x"))
+        self.assertEqual(recipe, native_image.recipe_of(self.work / "ftw-0x-beta"))
+        path = self.work / "ftw-0x/run.sh"
+        path.write_text(path.read_text() + "# drift\n")
+        git("commit", "-q", "-am", "drift")
+        with self.assertRaisesRegex(ValueError, "different images"):
+            publish.image_recipe(git("rev-parse", "HEAD"), moved)
+
+    def test_a_stable_below_the_beta_builds_from_the_stable_app(self):
+        head = self.pin()
+        moved = publish.verify_change(self.base, head, self.tag)
+        self.assertEqual(moved, {"ftw-0x"})
+        self.assertEqual(publish.image_recipe(head, moved), (native_image.recipe_of(self.work / "ftw-0x"), "ftw-0x"))
 
     def test_listing_with_other_changes_is_refused(self):
         head = self.pin()

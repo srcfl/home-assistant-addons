@@ -92,5 +92,91 @@ class PinWorkflowTest(unittest.TestCase):
         self.assertFalse(any(call[:3] == ["gh", "workflow", "run"] for call in calls))
 
 
+class ImageFlowTest(unittest.TestCase):
+    """The pin workflow builds and signs the image before it can merge the pin."""
+
+    def setUp(self):
+        self.workflow = yaml.load((ROOT / ".github/workflows/sync-native.yml").read_text(), Loader=yaml.BaseLoader)
+        self.jobs = self.workflow["jobs"]
+
+    def steps(self, job):
+        return self.jobs[job]["steps"]
+
+    def step(self, job, name):
+        return next(step for step in self.steps(job) if step.get("name") == name)
+
+    def test_jobs_run_in_order(self):
+        self.assertEqual(list(self.jobs), ["pin", "image", "publish"])
+        self.assertEqual(self.jobs["image"]["needs"], "pin")
+        self.assertEqual(self.jobs["publish"]["needs"], ["pin", "image"])
+        # A plain success() gate: a failed or skipped image job stops the merge.
+        self.assertNotIn("if", self.jobs["publish"])
+        self.assertEqual(self.jobs["image"]["if"], "needs.pin.outputs.number != ''")
+
+    def test_only_the_image_job_writes_packages_or_signs(self):
+        for name, job in self.jobs.items():
+            permissions = job.get("permissions", {})
+            with self.subTest(job=name):
+                if name == "image":
+                    self.assertEqual(permissions, {"contents": "read", "packages": "write", "id-token": "write"})
+                else:
+                    self.assertNotIn("packages", permissions)
+                    self.assertNotIn("id-token", permissions)
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+
+    def test_each_architecture_builds_on_its_own_runner(self):
+        from scripts import native_image
+        matrix = self.jobs["image"]["strategy"]["matrix"]["include"]
+        self.assertEqual({entry["arch"]: entry["os"] for entry in matrix},
+                         {"amd64": "ubuntu-24.04", "aarch64": "ubuntu-24.04-arm"})
+        self.assertEqual(tuple(entry["arch"] for entry in matrix), native_image.ARCHES)
+
+    def test_the_image_job_builds_the_verified_commit(self):
+        prepare = self.step("pin", "Verify the pin and name its image")
+        names = [step.get("name") for step in self.steps("pin")]
+        self.assertLess(names.index("Open the pin pull request"), names.index(prepare["name"]))
+        self.assertIn("native_publish prepare", prepare["run"])
+        checkout = self.steps("image")[0]
+        self.assertTrue(checkout["uses"].startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"], {"ref": "${{ needs.pin.outputs.head }}", "persist-credentials": "false"})
+        found = self.step("image", "Look for this version's image")["run"]
+        self.assertIn('test "$(git rev-parse HEAD)" = "${HEAD}"', found)
+        self.assertIn('native_image recipe "${APP_DIR}")" = "${RECIPE}"', found)
+
+    def test_build_smoke_push_and_sign_in_that_order(self):
+        names = [step.get("name") or step.get("uses") for step in self.steps("image")]
+        build = names.index("Build from the pinned release package")
+        smoke = names.index("Smoke the image under Supervisor-like conditions")
+        push = names.index("Push to a new tag and sign the pushed digest")
+        self.assertLess(build, smoke)
+        self.assertLess(smoke, push)
+        run = self.step("image", "Build from the pinned release package")["run"]
+        for part in ("--pull", '"BUILD_ARCH=${ARCH}"', '"BUILD_VERSION=${VERSION}"',
+                     '"com.sourceful.ftw.recipe=${RECIPE}"', '"${APP_DIR}"'):
+            self.assertIn(part, run)
+        self.assertIn("scripts/smoke_native.sh", self.step("image", names[smoke])["run"])
+        self.assertIn("native_image push", self.step("image", names[push])["run"])
+        for step in self.steps("image")[3:]:
+            if step.get("name") != "Look for this version's image":
+                self.assertEqual(step.get("if"), "steps.found.outputs.digest == ''", step)
+        text = (ROOT / ".github/workflows/sync-native.yml").read_text()
+        for forbidden in ("docker tag", "imagetools create", "--force", ":latest"):
+            self.assertNotIn(forbidden, text)
+
+    def test_publish_verifies_without_a_registry_login(self):
+        uses = [step.get("uses", "") for step in self.steps("publish")]
+        self.assertFalse(any(use.startswith("docker/login-action") for use in uses))
+        self.assertTrue(any(use.startswith("sigstore/cosign-installer@") for use in uses))
+        self.assertIn("native_publish publish", self.step("publish", "Check, verify the images and merge")["run"])
+
+    def test_main_checks_its_images(self):
+        check = yaml.load((ROOT / ".github/workflows/check.yml").read_text(), Loader=yaml.BaseLoader)
+        steps = check["jobs"]["repository"]["steps"]
+        verify = next(step for step in steps if "verify-main" in step.get("run", ""))
+        self.assertEqual(verify["if"], "github.ref == 'refs/heads/main'")
+        self.assertTrue(any(step.get("uses", "").startswith("sigstore/cosign-installer@")
+                            and step.get("if") == verify["if"] for step in steps))
+
+
 if __name__ == "__main__":
     unittest.main()

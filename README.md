@@ -1,47 +1,52 @@
-# Sourceful FTW for Home Assistant
+# FTW for Home Assistant
+
+FTW plans your battery, car charging and solar around electricity prices and
+controls them. The **FTW (beta)** app runs FTW on Home Assistant OS, for
+example on a Home Assistant Green (aarch64) or an amd64 machine. Control runs
+on your Home Assistant, not in a cloud.
+
+[![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fsrcfl%2Fhome-assistant-addons)
+
+1. Select the button to add this repository to Home Assistant. Or open
+   **Settings → Apps → Install app → ⋮ → Repositories** and add
+   `https://github.com/srcfl/home-assistant-addons`.
+2. Install **FTW (beta)**, version 0.x, and choose **Start**. The first
+   install builds the app on your device and takes a few minutes.
+3. Choose **Open Web UI** and follow FTW's setup guide. Turn on **Show in
+   sidebar** on the app's **Info** tab to open FTW from Home Assistant's
+   sidebar.
+
+Step by step: [ftw-0x-beta/DOCS.md](ftw-0x-beta/DOCS.md), also in FTW's docs
+([English](https://github.com/srcfl/ftw/blob/master/docs/home-assistant-app.md),
+[svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
+
+FTW (beta) is a beta. Home Assistant builds it on your device from FTW's
+published release package and checks the pinned SHA-256; no registry image is
+involved. A stable app, **FTW**, joins the store with FTW's first 0.x stable
+release.
+
+## FTW on another computer
+
+FTW also runs on any 64-bit Linux computer with systemd, for example a
+Raspberry Pi 3 or newer with Raspberry Pi OS Lite (64-bit). Follow
+[Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
+([svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/update-sv.md)).
+Home Assistant can still show FTW's values through the
+[MQTT integration](https://github.com/srcfl/ftw/blob/master/docs/ha-integration.md).
+Keep a broker that the devices need running.
+
+## Ran an older FTW before?
 
 **FTW 2.x and 3.x will receive no further updates. All new releases use the
 new 0.x line. Do not install this repository's old 3.x beta to get current FTW.**
 
-## New: FTW (beta) — pilot
-
-[![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fsrcfl%2Fhome-assistant-addons)
-
-**FTW (beta)** runs new FTW 0.x directly on Home Assistant OS, for
-example a Home Assistant Green (aarch64) or an amd64 machine. It is a beta
-for a first pilot. Home Assistant builds it on your device
-from FTW's published release package and checks the pinned SHA-256; no
-registry image is involved.
-
-Step by step for beginners:
-[ftw-0x-beta/DOCS.md](ftw-0x-beta/DOCS.md), also in FTW's docs
-([English](https://github.com/srcfl/ftw/blob/master/docs/home-assistant-app.md),
-[svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/home-assistant-sv.md)).
-Open **Settings → Apps → Install app → ⋮ → Repositories**, add
-`https://github.com/srcfl/home-assistant-addons`, install **FTW (beta)**,
-start it and choose **Open web UI**. Turn on **Show in sidebar** on the app's
-**Info** tab to open FTW from Home Assistant's sidebar.
-
-A stable app, **FTW**, follows with FTW's first 0.x stable release; until then
-the app store offers only **FTW (beta)**, version 0.x. The retired 3.x apps,
-one of them also named FTW (beta), are no longer listed for new installs. Existing installations and their data stay
-on the device; keep a backup before moving to the new app.
-
-## Alternative: FTW on a separate Linux host
-
-Follow [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
-([Svenska](https://github.com/srcfl/ftw/blob/master/docs/setup-guide/update-sv.md)).
-Run the new native or Docker package on another 64-bit Linux host. You can
-set up the site now with separate data; guided transfer of old settings and
-history is not ready. Keep a Home Assistant backup and the old app's data.
-Stop old Core, Start on boot and Watchdog before new FTW controls the same
-equipment, and verify that it stays stopped after reboot.
-
-Home Assistant can still use the
-[MQTT integration](https://github.com/srcfl/ftw/blob/master/docs/ha-integration.md)
-with FTW on that separate host. Keep a broker that the devices need running.
-
-## Existing installations and recovery
+The retired 3.x apps, one of them also named FTW (beta), are no longer listed
+for new installs. Existing installations and their data stay on the device;
+keep a backup before moving to the new app. The new app starts with a new
+setup and separate data; guided transfer of old settings and history is not
+ready. Only one FTW may control a home: stop the old app and turn off its
+**Start on boot** and **Watchdog** before new FTW controls the same equipment,
+and check that it stays stopped after a reboot.
 
 Supervisor owns the old app's stop, backup and restore operations; FTW's
 updater is not in the image. A source version or registry image alone is not

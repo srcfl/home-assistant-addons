@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The store says what FTW does, with an icon and logo sized for it.
+- The docs start with the next steps, and say why the app uses the host network and that the phone app needs internet.
+
 ## 0.170.0-beta.1
 
 - Update FTW to [v0.170.0-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.170.0-beta.1).

@@ -5,7 +5,7 @@
 name: FTW
 version: ""
 slug: ftw-0x
-description: FTW stable, built on the device from the checksummed release package.
+description: Plans and runs your battery, car charging and solar around electricity prices.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x
 arch:
   - amd64

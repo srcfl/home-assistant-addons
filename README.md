@@ -7,6 +7,9 @@ on your Home Assistant, not in a cloud.
 
 [![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fsrcfl%2Fhome-assistant-addons)
 
+Ran FTW 2.x or 3.x before? Read
+[Ran an older FTW before?](#ran-an-older-ftw-before) first.
+
 1. Select the button to add this repository to Home Assistant. Or open
    **Settings → Apps → Install app → ⋮ → Repositories** and add
    `https://github.com/srcfl/home-assistant-addons`.
@@ -41,12 +44,12 @@ Keep a broker that the devices need running.
 new 0.x line. Do not install this repository's old 3.x beta to get current FTW.**
 
 The retired 3.x apps, one of them also named FTW (beta), are no longer listed
-for new installs. Existing installations and their data stay on the device;
-keep a backup before moving to the new app. The new app starts with a new
-setup and separate data; guided transfer of old settings and history is not
-ready. Only one FTW may control a home: stop the old app and turn off its
-**Start on boot** and **Watchdog** before new FTW controls the same equipment,
-and check that it stays stopped after a reboot.
+for new installs. Existing installations and their data stay on the device.
+Keep a Home Assistant backup and the old app's data before moving to the new
+app. The new app starts with a new setup and separate data; guided transfer of
+old settings and history is not ready. Only one FTW may control a home: stop
+the old app and turn off its **Start on boot** and **Watchdog** before new FTW
+controls the same equipment, and check that it stays stopped after a reboot.
 
 Supervisor owns the old app's stop, backup and restore operations; FTW's
 updater is not in the image. A source version or registry image alone is not

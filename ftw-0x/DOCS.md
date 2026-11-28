@@ -29,10 +29,11 @@ CPU (amd64 or aarch64, for example Home Assistant Green). The package's
 SHA-256 is pinned in this repository and checked again against the release's
 own `.sha256` file. A bad download stops the install.
 
-**Why host network.** FTW searches your home network for devices, talks to
-inverters and meters over Modbus TCP, and lets OCPP chargers dial in to it at
-Home Assistant's address. That needs Home Assistant's own network, which also
-lowers the app's protection rating in the store.
+**Why host network.** FTW uses Home Assistant's own network so it can search
+your home network for inverters, meters and chargers, find devices by their
+`.local` names, and let OCPP chargers dial in at Home Assistant's address
+(port 8887 by default). Host networking also lowers the app's protection
+rating in the store.
 
 ## 1. Stop any other FTW
 
@@ -70,8 +71,9 @@ your devices keep finding it.
 
 In FTW, open **Settings → FTW app** and follow
 [Pair with one iPhone](https://github.com/srcfl/ftw/blob/master/docs/pairing.md).
-Use the pairing link or the QR. Pairing and using the phone app go through FTW
-Cloud, so they need internet; control runs on the box, here your Home
+Use the pairing link or the QR. Pairing turns on FTW Cloud and accepts its
+[terms](https://ftw.energy/privacy). The phone app then connects through FTW
+Cloud, so pairing and the phone app need internet; control runs on your Home
 Assistant. The phone needs nothing on your home network. The short code with a
 box address does not work in this app, since it needs FTW's own web port,
 which this app closes.

@@ -14,13 +14,15 @@ controls them, here on your Home Assistant.
 > 5. For Home Assistant entities, add the **Mosquitto broker** app and the
 >    **MQTT** integration Home Assistant offers, then restart FTW.
 
-**Why host network.** FTW searches your home network for devices, talks to
-inverters and meters over Modbus TCP, and lets OCPP chargers dial in to it.
-That needs Home Assistant's own network, which also lowers the app's
-protection rating in the store.
+**Why host network.** FTW uses Home Assistant's own network so it can search
+your home network for inverters, meters and chargers, find devices by their
+`.local` names, and let OCPP chargers dial in at Home Assistant's address
+(port 8887 by default). Host networking also lowers the app's protection
+rating in the store.
 
-Pairing and using the FTW app on your phone go through FTW Cloud, so they need
-internet. Control runs on the box, here your Home Assistant.
+Pairing turns on FTW Cloud and accepts its [terms](https://ftw.energy/privacy).
+The FTW app on your phone then connects through FTW Cloud, so pairing and the
+phone app need internet. Control runs on your Home Assistant.
 
 Beta: every FTW beta arrives as an update. Only one FTW may control a home, so
 stop any other FTW (an old app or another computer) before this one controls

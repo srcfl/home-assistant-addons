@@ -11,7 +11,7 @@ controls them, here on your Home Assistant.
 >    Home Assistant restarts FTW if it stops answering.
 > 4. Follow FTW's setup guide: your home, then your devices.
 > 5. For Home Assistant entities, add the **Mosquitto broker** app and the
->    **MQTT** integration Home Assistant offers, then restart FTW.
+>    **MQTT** integration Home Assistant offers. FTW finds them by itself.
 
 **Why host network.** FTW uses Home Assistant's own network so it can search
 your home network for inverters, meters and chargers, find devices by their

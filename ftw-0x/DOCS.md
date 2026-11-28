@@ -11,7 +11,7 @@ controls them, here on your Home Assistant.
 >    Home Assistant restarts FTW if it stops answering.
 > 4. Follow FTW's setup guide: your home, then your devices.
 > 5. For Home Assistant entities, add the **Mosquitto broker** app and the
->    **MQTT** integration Home Assistant offers, then restart FTW.
+>    **MQTT** integration Home Assistant offers. FTW finds them by itself.
 >
 > The rest of this page explains each step.
 

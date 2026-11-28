@@ -13,7 +13,7 @@ export_home_assistant_mqtt() {
   if ! reply="$(curl -fsS -m 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
       http://supervisor/services/mqtt 2>/dev/null)" ||
     ! host="$(jq -er '.data.host | strings | select(length > 0)' <<<"${reply}" 2>/dev/null)"; then
-    printf 'FTW: Home Assistant has no MQTT broker. Add the Mosquitto broker app, then restart FTW, to see FTW in Home Assistant.\n' >&2
+    printf 'FTW: Home Assistant has no MQTT broker. Add the Mosquitto broker app; FTW finds it by itself and shows up in Home Assistant.\n' >&2
     return 0
   fi
   if ! port="$(jq -er '.data.port // 1883 | numbers | select(. == floor and . > 0 and . < 65536)' <<<"${reply}" 2>/dev/null)"; then

@@ -4,10 +4,11 @@
   native_pin.py check            verify each app's manifest and Dockerfile agree
                                  and match the release's own receipt and
                                  .sha256 files
-  native_pin.py bump [TAG]       rewrite a pin to TAG after the same checks.
-                                 A beta tag (v0.X.Y-beta.N, default: the newest)
-                                 moves ftw-0x-beta; a stable tag (v0.X.Y) moves
-                                 the stable app in ftw-0x
+  native_pin.py bump [TAG]       move every app that takes TAG (default: the
+                                 newest new-line 0.x release) after the same
+                                 checks. Like Core's beta channel, ftw-0x-beta
+                                 takes the highest release, beta or stable; the
+                                 stable app ftw-0x takes only stable releases
 
 The stable app stays out of the store until the first 0.x stable: its manifest
 is kept as ftw-0x/unlisted.yaml, which Supervisor does not read, and its pins
@@ -33,7 +34,11 @@ REPO = "srcfl/ftw"
 TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)-beta\.(\d+)$")
 STABLE_TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)$")
 MIN_MINOR = 131  # the new 0.x line starts at v0.131.0-beta.1
-SLUGS = {"beta": "ftw-0x-beta", "stable": "ftw"}
+SLUGS = {"beta": "ftw-0x-beta", "stable": "ftw-0x"}
+# Which releases each app takes. The beta app follows Core's beta channel,
+# which takes the highest release, so a stable that outranks every beta
+# reaches it too.
+TAKES = {"beta": ("beta", "stable"), "stable": ("stable",)}
 UNLISTED = "unlisted.yaml"  # the stable manifest before the first stable
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
@@ -69,12 +74,6 @@ def asset(tag: str, name: str) -> bytes:
     return fetch(f"https://github.com/{REPO}/releases/download/{tag}/{name}")
 
 
-def valid_tag(tag: str) -> bool:
-    """A new-line 0.x beta tag."""
-    m = TAG_RE.match(tag)
-    return bool(m) and int(m.group(1)) >= MIN_MINOR
-
-
 def channel(tag: str) -> str:
     """beta or stable, for a tag of the new 0.x line."""
     for name, pattern in (("beta", TAG_RE), ("stable", STABLE_TAG_RE)):
@@ -84,10 +83,27 @@ def channel(tag: str) -> str:
     raise SystemExit(f"{tag} is not a new-line 0.x beta or stable tag")
 
 
+def valid_tag(tag: str) -> bool:
+    """A beta or stable tag of the new 0.x line."""
+    try:
+        channel(tag)
+    except SystemExit:
+        return False
+    return True
+
+
 def tag_order(tag: str) -> tuple[int, ...]:
-    """Sort key within one channel: (minor, patch, beta) or (minor, patch)."""
-    pattern = TAG_RE if channel(tag) == "beta" else STABLE_TAG_RE
-    return tuple(int(x) for x in pattern.fullmatch(tag).groups())
+    """Release order across channels: v0.X.Y-beta.N < v0.X.Y < v0.X.(Y+1)-beta.1."""
+    if channel(tag) == "beta":
+        minor, patch, beta = TAG_RE.fullmatch(tag).groups()
+        return int(minor), int(patch), 0, int(beta)
+    minor, patch = STABLE_TAG_RE.fullmatch(tag).groups()
+    return int(minor), int(patch), 1, 0
+
+
+def apps_for(tag: str) -> list[str]:
+    """The apps that take this release."""
+    return [name for name in ("beta", "stable") if channel(tag) in TAKES[name]]
 
 
 def app_dir(name: str) -> pathlib.Path:
@@ -98,7 +114,7 @@ def latest_tag() -> str:
     releases = json.loads(fetch(f"https://api.github.com/repos/{REPO}/releases?per_page=50"))
     tags = [r["tag_name"] for r in releases if not r.get("draft") and valid_tag(r["tag_name"])]
     if not tags:
-        raise SystemExit("no new-line 0.x beta found")
+        raise SystemExit("no new-line 0.x release found")
     return max(tags, key=tag_order)
 
 
@@ -155,8 +171,8 @@ def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str]
         if tag or version or any(sums.values()) or field(config, "FTW_BUNDLE_VERSION") or field(config, "FTW_IMAGE_TAG"):
             raise SystemExit(f"{directory.name}/{UNLISTED} must pin nothing until the first stable")
         return None, None, None
-    if channel(tag) != name:
-        raise SystemExit(f"{directory.name} takes only {name} releases, not {tag}")
+    if channel(tag) not in TAKES[name]:
+        raise SystemExit(f"{directory.name} takes only {' and '.join(TAKES[name])} releases, not {tag}")
     if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     for arch, value in sums.items():
@@ -173,8 +189,9 @@ def put(text: str, key: str, pattern: str, value: str) -> str:
     return out
 
 
-def write_pin(tag: str, sums: dict[str, str]) -> None:
-    name = channel(tag)
+def write_pin(tag: str, sums: dict[str, str], name: str = "beta") -> None:
+    if channel(tag) not in TAKES[name]:
+        raise SystemExit(f"{app_dir(name).name} does not take {tag}")
     read_pin(name)
     directory = app_dir(name)
     source = manifest(directory)
@@ -210,26 +227,33 @@ def main(argv: list[str]) -> int:
             print(f"ok: {SLUGS[name]} pins {tag}")
     elif cmd == "bump":
         tag = argv[2] if len(argv) > 2 else latest_tag()
-        name = channel(tag)
-        current, _, _ = read_pin(name)
-        if current is not None and tag_order(tag) < tag_order(current):
-            print(f"ignored older {name} {tag}; already pinned to {current}")
+        moving = {}
+        for name in apps_for(tag):
+            if not app_dir(name).is_dir():
+                continue
+            current, _, _ = read_pin(name)
+            if current is not None and tag_order(tag) < tag_order(current):
+                print(f"ignored older {tag} for {SLUGS[name]}; already pinned to {current}")
+            else:
+                moving[name] = current
+        if not moving:
             return 0
         sums = receipt(tag)
-        write_pin(tag, sums)
-        if tag != current:
-            changelog = app_dir(name) / "CHANGELOG.md"
-            notes = changelog.read_text()
-            entry = (f"# Changelog\n\n## {tag[1:]}\n\n"
-                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n")
-            # App changes merged since the last pin ship with this one.
-            if notes.startswith(UNRELEASED):
-                notes = notes.replace(UNRELEASED, entry, 1)
-            else:
-                notes = notes.replace("# Changelog\n\n", entry + "\n", 1)
-            changelog.write_text(notes)
-        read_pin(name)
-        print(f"pinned {tag}")
+        for name, current in moving.items():
+            write_pin(tag, sums, name)
+            if tag != current:
+                changelog = app_dir(name) / "CHANGELOG.md"
+                notes = changelog.read_text()
+                entry = (f"# Changelog\n\n## {tag[1:]}\n\n"
+                         f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n")
+                # App changes merged since the last pin ship with this one.
+                if notes.startswith(UNRELEASED):
+                    notes = notes.replace(UNRELEASED, entry, 1)
+                else:
+                    notes = notes.replace("# Changelog\n\n", entry + "\n", 1)
+                changelog.write_text(notes)
+            read_pin(name)
+            print(f"pinned {SLUGS[name]} to {tag}")
     else:
         raise SystemExit(__doc__)
     return 0

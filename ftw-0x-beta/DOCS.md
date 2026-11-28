@@ -1,8 +1,8 @@
 # FTW (beta)
 
-> **Beta / pilot.** New FTW 0.x on Home Assistant OS. Reviewed FTW beta pins
-> arrive as app updates, so expect frequent updates. You choose when to install
-> them. The alternative is FTW on a
+> **Beta / pilot.** New FTW 0.x on Home Assistant OS. Every FTW beta, and a
+> stable newer than the last beta, arrives as an app update, so expect
+> frequent updates. You choose when to install them. The alternative is FTW on a
 > [separate Linux host](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)
 > plus the [MQTT integration](https://github.com/srcfl/ftw/blob/master/docs/ha-integration.md).
 

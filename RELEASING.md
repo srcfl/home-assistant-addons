@@ -44,7 +44,7 @@ See [qualification](pilot/README.md).
 
 ## 0.x stable
 
-The stable app's slug is `ftw`; its name is **FTW**. It lives in `ftw-0x/` and
+The stable app's slug is `ftw-0x`; its name is **FTW**. It lives in `ftw-0x/` and
 uses the beta app's recipe: `Dockerfile` (bar the three pin lines),
 `run.sh`, `healthcheck.sh`, `mqtt-service.sh` and every manifest setting
 except name, slug, url, description and the pins. `validate.py` refuses
@@ -53,19 +53,23 @@ with the next stable pin, since Supervisor rebuilds an app only when its
 version moves.
 
 Only a stable tag (`v0.X.Y`, `v0.131.0` or later) moves it; a beta never does.
+The beta app follows Core's beta channel, which takes the highest release: a
+stable moves it too when the stable outranks its beta pin (`v0.X.Y` is above
+every `v0.X.Y-beta.N` and below `v0.X.(Y+1)-beta.1`). One pin PR carries
+every app a release moves.
 Until the first one, its manifest is `ftw-0x/unlisted.yaml` with empty pins.
 Supervisor reads only `config.yaml`, so the app is not in the store. The
 first stable pin writes `ftw-0x/config.yaml` from it and removes
 `unlisted.yaml`; that merge lists the app. Do not rename the file by hand.
 
 1. Core promotes a tested beta to `v0.X.Y` with `native-release.yml`.
-2. Core sends no event for a stable today. Run
+2. Core sends `ftw-native-release` for the stable as for a beta
+   ([srcfl/ftw#2101](https://github.com/srcfl/ftw/pull/2101)). Without that event, run
    `gh workflow run sync-native.yml --repo srcfl/home-assistant-addons --ref main -f tag=v0.X.Y`.
-3. The workflow opens `bot/pin-ftw-v0.X.Y` and publishes it after Check, as
+3. The workflow opens `bot/pin-ftw-0x-v0.X.Y` and publishes it after Check, as
    for a beta. Its receipt must say `"channel": "stable"`.
 
-The beta app does not take stable releases. Each app keeps its own `/data`,
-so moving between them is a new setup.
+Each app keeps its own `/data`, so moving between them is a new setup.
 
 ## Retired 2.x and 3.x path
 
@@ -86,9 +90,10 @@ describes that historical pipeline; it is not the current release policy.
 The old apps are no longer listed in the store. `ftw-beta/retired.yaml` keeps
 the last manifest for recovery; do not rename it to `config.yaml`, `config.yml`
 or `config.json`. Supervisor would list it again, even in a nested folder.
-The slug `ftw` was listed once before, as `0.1.0-beta.1` (Core v1.10.0-beta.1),
-from 22 July to 18 September 2026. No stable version of it was ever published.
-The first 0.x stable pin offers any such install an update to 0.x.
+The slug `ftw` was listed once, as `0.1.0-beta.1` (Core v1.10.0-beta.1), from
+22 July to 18 September 2026. An install may still hold it with that data, and
+a listed app with the same slug would offer it an update. So `ftw` and
+`ftw-beta` stay retired; `validate.py` refuses any manifest that uses them.
 
 Removing a store entry does not uninstall an existing app or delete its data.
 HA may flag the old app as removed from its repository. Keep its backup and

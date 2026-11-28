@@ -215,12 +215,15 @@ if __name__ == "__main__":
 
 
 class StablePinTest(AppCopies):
-    """The stable app takes only stable releases and is listed with the first."""
+    """The stable app takes only stable releases and is listed with the first.
+    The beta app follows Core's beta channel: the highest release of either."""
 
     def setUp(self):
         super().setUp()
-        minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
-        self.first, self.second = f"v0.{minor}.0", f"v0.{minor}.1"
+        self.minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
+        # Below the beta pin, as a stable that trails the newest beta is.
+        self.first, self.second = f"v0.{self.minor - 1}.0", f"v0.{self.minor - 1}.1"
+        self.above = f"v0.{self.minor + 1}.0"
 
     def files(self, directory):
         return {p.name: p.read_bytes() for p in directory.iterdir() if p.is_file()}
@@ -242,14 +245,28 @@ class StablePinTest(AppCopies):
             native_pin.main(["x", "check"])
         return set(asked), out.getvalue()
 
+    def test_release_order_across_channels(self):
+        m = self.minor
+        ordered = [f"v0.{m}.0-beta.1", f"v0.{m}.0-beta.2", f"v0.{m}.0", f"v0.{m}.1-beta.1", f"v0.{m}.1",
+                   f"v0.{m + 1}.0-beta.1"]
+        self.assertEqual(sorted(reversed(ordered), key=native_pin.tag_order), ordered)
+
+    def test_newest_release_is_the_highest_of_either_channel(self):
+        m = self.minor
+        for tags, newest in (([f"v0.{m}.0-beta.3", f"v0.{m}.0", "v3.8.0", "drivers-stable"], f"v0.{m}.0"),
+                             ([f"v0.{m}.0", f"v0.{m}.1-beta.1", "v0.130.4"], f"v0.{m}.1-beta.1")):
+            releases = json.dumps([{"tag_name": tag} for tag in tags]).encode()
+            with self.subTest(tags=tags), mock.patch.object(native_pin, "fetch", return_value=releases):
+                self.assertEqual(native_pin.latest_tag(), newest)
+
     def test_unlisted_app_pins_nothing(self):
         self.assertEqual(native_pin.read_pin("stable"), (None, None, None))
         self.assertFalse((self.stable / "config.yaml").exists())
-        beta = f"v0.{native_pin.tag_order(native_pin.read_pin()[0])[0] + 1}.0-beta.1"
+        beta = f"v0.{self.minor + 1}.0-beta.1"
         self.bump(beta)
         asked, said = self.check()
         self.assertEqual(asked, {beta})
-        self.assertIn("ftw is not listed", said)
+        self.assertIn("ftw-0x is not listed", said)
 
     def test_first_stable_lists_the_app(self):
         beta = self.files(self.app)
@@ -258,16 +275,32 @@ class StablePinTest(AppCopies):
         self.assertFalse((self.stable / native_pin.UNLISTED).exists())
         config = (self.stable / "config.yaml").read_text()
         self.assertTrue(config.startswith("name: FTW\n"), config[:80])
-        self.assertIn("\nslug: ftw\n", config)
+        self.assertIn("\nslug: ftw-0x\n", config)
         notes = (self.stable / "CHANGELOG.md").read_text()
         self.assertTrue(notes.startswith(f"# Changelog\n\n## {self.first[1:]}\n\n- Update FTW to [{self.first}]"), notes)
         self.assertNotIn("## Unreleased", notes)
-        self.assertEqual(beta, self.files(self.app), "a stable release must not move the beta app")
-        newer_beta = f"v0.{native_pin.tag_order(native_pin.read_pin()[0])[0] + 1}.0-beta.1"
+        self.assertEqual(beta, self.files(self.app), "a stable below the beta pin must not move the beta app")
+        newer_beta = f"v0.{self.minor + 1}.0-beta.1"
         self.bump(newer_beta)
         asked, said = self.check()
         self.assertEqual(asked, {newer_beta, self.first})
-        self.assertIn(f"ftw pins {self.first}", said)
+        self.assertIn(f"ftw-0x pins {self.first}", said)
+
+    def test_a_stable_above_every_beta_moves_both_apps(self):
+        self.bump(self.above)
+        for name in ("beta", "stable"):
+            self.assertEqual(native_pin.read_pin(name), (self.above, self.above[1:], {"amd64": A, "arm64": B}))
+            notes = (native_pin.app_dir(name) / "CHANGELOG.md").read_text()
+            self.assertTrue(notes.startswith(f"# Changelog\n\n## {self.above[1:]}\n\n"), notes[:80])
+        # A beta of that same version is older; the next one moves the beta app only.
+        with mock.patch.object(native_pin, "asset") as download:
+            native_pin.main(["x", "bump", f"v0.{self.minor + 1}.0-beta.9"])
+        download.assert_not_called()
+        stable = self.files(self.stable)
+        later = f"v0.{self.minor + 1}.1-beta.1"
+        self.bump(later)
+        self.assertEqual(native_pin.read_pin()[0], later)
+        self.assertEqual(stable, self.files(self.stable))
 
     def test_later_stable_moves_and_older_is_ignored(self):
         self.bump(self.first)
@@ -281,8 +314,7 @@ class StablePinTest(AppCopies):
 
     def test_a_beta_never_moves_the_stable_app(self):
         stable = self.files(self.stable)
-        minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
-        self.bump(f"v0.{minor + 1}.0-beta.1")
+        self.bump(f"v0.{self.minor + 1}.0-beta.1")
         self.assertEqual(stable, self.files(self.stable))
 
     def test_an_unlisted_app_with_a_pin_is_refused(self):
@@ -297,12 +329,13 @@ class StablePinTest(AppCopies):
         with self.assertRaisesRegex(SystemExit, "one manifest"):
             native_pin.read_pin("stable")
 
-    def test_each_app_keeps_its_channel(self):
+    def test_the_stable_app_never_holds_a_beta(self):
         self.bump(self.first)
-        config = self.app / "config.yaml"
-        build = self.app / "Dockerfile"
-        tag, version, _ = native_pin.read_pin()
-        config.write_text(config.read_text().replace(version, self.first[1:]).replace(tag, self.first))
-        build.write_text(build.read_text().replace(tag, self.first))
-        with self.assertRaisesRegex(SystemExit, "takes only beta"):
-            native_pin.read_pin()
+        config, build = self.stable / "config.yaml", self.stable / "Dockerfile"
+        beta = f"v0.{self.minor}.0-beta.1"
+        config.write_text(config.read_text().replace(self.first[1:], beta[1:]).replace(self.first, beta))
+        build.write_text(build.read_text().replace(self.first, beta))
+        with self.assertRaisesRegex(SystemExit, "takes only stable"):
+            native_pin.read_pin("stable")
+        with self.assertRaisesRegex(SystemExit, "does not take"):
+            native_pin.write_pin(beta, {"amd64": A, "arm64": B}, "stable")

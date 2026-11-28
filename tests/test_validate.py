@@ -303,11 +303,28 @@ class NativeAppsTests(unittest.TestCase):
     def test_compatibility_names_the_native_apps(self) -> None:
         compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
         validate.validate_native(compat)
-        for field, value in (("add_on", "ftw-stable"), ("directory", "ftw"), ("channel", "beta")):
+        for field, value in (("add_on", "ftw"), ("directory", "ftw"), ("takes", ["beta", "stable"])):
             broken = copy.deepcopy(compat)
             broken["native"]["stable"][field] = value
             with self.subTest(field=field), self.assertRaises(validate.ValidationError):
                 validate.validate_native(broken)
+        broken = copy.deepcopy(compat)
+        broken["native"]["beta"]["takes"] = ["beta"]
+        with self.assertRaises(validate.ValidationError):
+            validate.validate_native(broken)
+        broken = copy.deepcopy(compat)
+        broken["native"]["retired_slugs"] = ["ftw-beta"]
+        with self.assertRaises(validate.ValidationError):
+            validate.validate_native(broken)
+
+    def test_no_listed_app_reuses_a_retired_slug(self) -> None:
+        for slug in ("ftw", "ftw-beta"):
+            with self.subTest(slug=slug):
+                path = self.root / "ftw-0x/config.yaml"
+                path.write_text(f"slug: {slug}\n")
+                with mock.patch.object(validate, "ROOT", self.root):
+                    with self.assertRaisesRegex(validate.ValidationError, "retired slug"):
+                        validate.validate_catalog()
 
 
 if __name__ == "__main__":

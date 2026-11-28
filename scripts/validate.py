@@ -75,6 +75,9 @@ def validate_core_image_tag_contract(dockerfile: str) -> None:
 RECIPE = ("Dockerfile", "run.sh", "healthcheck.sh", "mqtt-service.sh")
 PIN_ARGS = re.compile(r"(?m)^(ARG FTW_(?:VERSION|SHA256_AMD64|SHA256_ARM64)=).*$")
 OWN_KEYS = {"name", "slug", "url", "version", "description"}
+# Slugs of the old line. An install may still hold one with old data, so no
+# listed app may use it again: Supervisor would offer that install the update.
+RETIRED_SLUGS = {"ftw", "ftw-beta"}
 PIN_ENV = {"FTW_BUNDLE_VERSION", "FTW_IMAGE_TAG"}
 
 
@@ -135,6 +138,7 @@ def validate_catalog() -> None:
     for manifest in sorted(manifests):
         config = load_yaml(ROOT / manifest)
         require("stage" not in config, f"{manifest} must omit stage; Home Assistant has no beta stage")
+        require(config.get("slug") not in RETIRED_SLUGS, f"{manifest} must not reuse a retired slug")
 
 
 def validate_core_pin(core: Any, channel: str) -> None:
@@ -162,9 +166,14 @@ def validate_native(compat: dict[str, Any]) -> None:
             block.get("directory") == native_pin.app_dir(name).name,
             f"native {name} app must live in {native_pin.app_dir(name).name}",
         )
-        require(block.get("channel") == name, f"native {name} app must take only {name} releases")
+        require(
+            block.get("takes") == list(native_pin.TAKES[name]),
+            f"native {name} app must take {list(native_pin.TAKES[name])}",
+        )
     require(native["stable"].get("listed_from") == f"v0.{native_pin.MIN_MINOR}.0",
             f"the stable app is listed from v0.{native_pin.MIN_MINOR}.0")
+    retired = set(native.get("retired_slugs") or ())
+    require(retired == RETIRED_SLUGS, f"retired slugs must be {sorted(RETIRED_SLUGS)}")
 
 
 def validate_common(compat: dict[str, Any]) -> None:

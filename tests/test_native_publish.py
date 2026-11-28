@@ -28,9 +28,10 @@ class PublishTest(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(publish.identity(pull()), TAG)
         pr = pull()
-        pr["head"]["ref"] = "bot/pin-ftw-v0.160.0"
+        pr["head"]["ref"] = "bot/pin-ftw-0x-v0.160.0"
         self.assertEqual(publish.identity(pr), "v0.160.0")
-        for branch in ("bot/pin-ftw-0x-beta-v0.160.0", "bot/pin-ftw-v0.160.0-beta.1", "bot/pin-ftw-v0.130.4"):
+        for branch in ("bot/pin-ftw-v0.160.0", "bot/pin-ftw-0x-beta-v0.160.0", "bot/pin-ftw-0x-v0.160.0-beta.1",
+                       "bot/pin-ftw-0x-v0.130.4", "bot/pin-ftw-0x-"):
             pr["head"]["ref"] = branch
             with self.subTest(branch=branch), self.assertRaises(ValueError):
                 publish.identity(pr)
@@ -152,16 +153,16 @@ class StablePublishTest(unittest.TestCase):
         git("commit", "-m", "base")
         self.base = git("rev-parse", "HEAD")
         minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
-        self.tag = f"v0.{minor}.0"
+        self.tag, self.above = f"v0.{minor - 1}.0", f"v0.{minor + 1}.0"  # below and above the beta pin
         for name, path in (("APP", self.work / "ftw-0x-beta"), ("STABLE_APP", self.work / "ftw-0x"),
                            ("receipt", lambda tag: SUMS)):
             patcher = patch.object(native_pin, name, path) if name != "receipt" else patch.object(native_pin, name, side_effect=path)
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def pin(self):
-        native_pin.main(["native_pin.py", "bump", self.tag])
-        git("add", "-A", "ftw-0x")
+    def pin(self, tag=None):
+        native_pin.main(["native_pin.py", "bump", tag or self.tag])
+        git("add", "-A", "ftw-0x", "ftw-0x-beta")
         git("commit", "-m", "pin")
         return git("rev-parse", "HEAD")
 
@@ -170,10 +171,23 @@ class StablePublishTest(unittest.TestCase):
         self.assertEqual(set(git("diff", "--no-renames", "--name-only", self.base, head).splitlines()),
                          {"ftw-0x/config.yaml", "ftw-0x/Dockerfile", "ftw-0x/CHANGELOG.md", "ftw-0x/unlisted.yaml"})
         publish.verify_change(self.base, head, self.tag)
-        self.assertEqual(publish.pinned_at(head, "stable"), self.tag)
-        self.assertIsNone(publish.pinned_at(self.base, "stable"))
+        before, after = publish.recreate(head, self.tag)
+        self.assertEqual(before, after, "a pinned release moves nothing again")
+        with self.assertRaises(ValueError):
+            publish.verify_change(head, head, self.tag)
         with self.assertRaises(ValueError):
             publish.verify_change(self.base, head, f"{self.tag[:-1]}1")
+
+    def test_stable_above_the_beta_moves_both_apps_in_one_pin(self):
+        head = self.pin(self.above)
+        self.assertEqual(set(git("diff", "--no-renames", "--name-only", self.base, head).splitlines()),
+                         {"ftw-0x/config.yaml", "ftw-0x/Dockerfile", "ftw-0x/CHANGELOG.md", "ftw-0x/unlisted.yaml",
+                          "ftw-0x-beta/config.yaml", "ftw-0x-beta/Dockerfile", "ftw-0x-beta/CHANGELOG.md"})
+        publish.verify_change(self.base, head, self.above)
+        git("checkout", "-q", self.base, "--", "ftw-0x-beta")
+        git("commit", "-q", "-m", "drop the beta half")
+        with self.assertRaises(ValueError):
+            publish.verify_change(self.base, git("rev-parse", "HEAD"), self.above)
 
     def test_listing_with_other_changes_is_refused(self):
         head = self.pin()

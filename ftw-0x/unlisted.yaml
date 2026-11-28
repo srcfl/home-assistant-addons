@@ -4,7 +4,7 @@
 # and removes this file. Do not rename it by hand, and keep the pins empty.
 name: FTW
 version: ""
-slug: ftw
+slug: ftw-0x
 description: FTW stable, built on the device from the checksummed release package.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x
 arch:

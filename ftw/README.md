@@ -1,8 +1,9 @@
 # FTW — old release line
 
 This folder is the retired 3.x build context; CI still builds it against a
-fixture. It never carries a manifest. The slug `ftw` now belongs to the new
-stable app in [`ftw-0x/`](../ftw-0x/DOCS.md).
+fixture. It never carries a manifest, and no app may use the slug `ftw` again:
+an install may still hold it. The new stable app is `ftw-0x`, in
+[`ftw-0x/`](../ftw-0x/DOCS.md).
 
 2.x and 3.x receive no further updates. This app does not follow new 0.x.
 No stable version of this app was ever published; its only listed version,

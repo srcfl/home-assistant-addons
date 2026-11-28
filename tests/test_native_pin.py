@@ -170,6 +170,16 @@ class PinFilesTest(unittest.TestCase):
         self.assertEqual(notes.count(f"## {tag[1:]}\n"), 1)
         self.assertIn(f"https://github.com/srcfl/ftw/releases/tag/{tag}", notes)
 
+    def test_unreleased_app_changes_ship_with_the_next_pin(self):
+        changelog = self.app / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n\n## Unreleased\n\n- App change.\n\n## 0.131.0-beta.1\n\n- Old.\n")
+        with mock.patch.object(native_pin, "asset", fake_assets(self.newer)):
+            native_pin.main(["x", "bump", self.newer])
+        self.assertEqual(changelog.read_text(), (
+            f"# Changelog\n\n## {self.newer[1:]}\n\n"
+            f"- Update FTW to [{self.newer}](https://github.com/srcfl/ftw/releases/tag/{self.newer}).\n"
+            "- App change.\n\n## 0.131.0-beta.1\n\n- Old.\n"))
+
 
 if __name__ == "__main__":
     unittest.main()

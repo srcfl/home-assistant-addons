@@ -4,9 +4,6 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
-
-from scripts import native_pin
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,18 +26,6 @@ printf '  HTTP/1.1 %s Result\\n' "$CODE" >&2
                 calls = (work / "calls").read_text()
                 self.assertIn("127.0.0.1:18099/api/health",calls)
                 self.assertNotIn("/setup",calls)
-
-    def test_same_tag_preserves_app_revision_and_next_beta_replaces_it(self):
-        with tempfile.TemporaryDirectory() as directory:
-            app = Path(directory)
-            for filename in ("config.yaml", "Dockerfile", "CHANGELOG.md"):
-                (app / filename).write_bytes((native_pin.APP / filename).read_bytes())
-            with patch.object(native_pin,"APP",app):
-                tag, version, sums = native_pin.read_pin()
-                native_pin.write_pin(tag,sums)
-                self.assertEqual(native_pin.read_pin()[1],version)
-                native_pin.write_pin("v0.160.0-beta.1",sums)
-                self.assertEqual(native_pin.read_pin()[1],"0.160.0-beta.1")
 
 
 if __name__ == '__main__':

@@ -26,6 +26,7 @@ TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)-beta\.(\d+)$")
 MIN_MINOR = 131  # the new 0.x line starts at v0.131.0-beta.1
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
+UNRELEASED = "# Changelog\n\n## Unreleased\n\n"
 PAUSE_S = 2  # before the second attempt; twice that before the third
 
 
@@ -110,8 +111,7 @@ def read_pin() -> tuple[str, str, dict[str, str]]:
     tag = field(build, "FTW_VERSION")
     tag_order(tag)
     version = field(config, "version")
-    if (not re.fullmatch(re.escape(tag[1:]) + r"(?:\.ha\.[1-9][0-9]*)?", version)
-            or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag):
+    if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
         raise SystemExit("config.yaml and Dockerfile pin different versions")
     if field(config, "slug") != "ftw-0x-beta" or re.search(r"^image:", config, re.M):
         raise SystemExit("ftw-0x-beta must keep its slug and have no image: key (built on the device)")
@@ -120,7 +120,7 @@ def read_pin() -> tuple[str, str, dict[str, str]]:
 
 def write_pin(tag: str, sums: dict[str, str]) -> None:
     old_tag, old_version, old_sums = read_pin()
-    version = old_version if tag == old_tag else tag[1:]
+    version = tag[1:]
     config = (APP / "config.yaml").read_text()
     config = config.replace(f'"{old_version}"', f'"{version}"').replace(old_tag, tag)
     build = (APP / "Dockerfile").read_text().replace(old_tag, tag)
@@ -147,9 +147,15 @@ def main(argv: list[str]) -> int:
         write_pin(tag, sums)
         if tag != current:
             changelog = APP / "CHANGELOG.md"
-            entry = (f"## {tag[1:]}\n\n"
-                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n\n")
-            changelog.write_text(changelog.read_text().replace("# Changelog\n\n", "# Changelog\n\n" + entry, 1))
+            notes = changelog.read_text()
+            entry = (f"# Changelog\n\n## {tag[1:]}\n\n"
+                     f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n")
+            # App changes merged since the last pin ship with this one.
+            if notes.startswith(UNRELEASED):
+                notes = notes.replace(UNRELEASED, entry, 1)
+            else:
+                notes = notes.replace("# Changelog\n\n", entry + "\n", 1)
+            changelog.write_text(notes)
         read_pin()
         print(f"pinned {tag}")
     else:

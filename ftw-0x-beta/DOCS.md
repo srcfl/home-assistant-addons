@@ -42,8 +42,11 @@ your devices keep finding it.
 
 ## 4. FTW app and webapp
 
-For a separate FTW client, enable FTW Cloud, then follow
+In FTW, open **Settings → FTW app** and follow
 [Pair with one iPhone](https://github.com/srcfl/ftw/blob/master/docs/pairing.md).
+Use the pairing link or the QR. The phone then connects through FTW Cloud and
+needs nothing on your home network. The short code with a box address does not
+work in this app, since it needs FTW's own web port, which this app closes.
 If you used the webapp with an older FTW, remove it from the home screen and
 pair again.
 

@@ -47,18 +47,23 @@ class PinRehearsalTest(unittest.TestCase):
 
             minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
             later = f"v0.{minor + MINORS_AHEAD}.0-beta.1"
+            # The stable app as well: a test that assumes it is still unlisted
+            # fails here, before the first stable lists it.
+            stable = f"v0.{minor + MINORS_AHEAD}.0"
             sums = {"amd64": "a" * 64, "arm64": "b" * 64}
             with mock.patch.object(native_pin, "APP", copy / "ftw-0x-beta"), \
+                    mock.patch.object(native_pin, "STABLE_APP", copy / "ftw-0x"), \
                     mock.patch.object(native_pin, "receipt", return_value=sums), \
                     contextlib.redirect_stdout(io.StringIO()):
                 native_pin.main(["native_pin.py", "bump", later])
+                native_pin.main(["native_pin.py", "bump", stable])
 
             result = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
                 cwd=copy, env=dict(os.environ, **{INSIDE: "1"}), capture_output=True, text=True)
             self.assertEqual(
                 result.returncode, 0,
-                f"these tests fail once the pin moves (rehearsed with {later}); "
+                f"these tests fail once the pins move (rehearsed with {later} and {stable}); "
                 f"take versions from the pin instead of writing them down:\n{result.stderr[-6000:]}")
 
 

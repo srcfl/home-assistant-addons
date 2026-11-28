@@ -47,9 +47,9 @@ class PinWorkflowTest(unittest.TestCase):
             path.write_text(stub)
             path.chmod(0o755)
 
-    def run_pin(self):
+    def run_pin(self, tag="v0.160.0-beta.1"):
         env = dict(os.environ, PATH=f"{self.work}:{os.environ['PATH']}",
-                   TEST_ROOT=str(self.work), TAG="v0.160.0-beta.1", GH_TOKEN="test-only")
+                   TEST_ROOT=str(self.work), TAG=tag, GH_TOKEN="test-only")
         env["GITHUB_OUTPUT"] = str(self.work / "outputs")
         result = subprocess.run(["bash", "-c", self.script], env=env,
                                 capture_output=True, text=True)
@@ -67,6 +67,20 @@ class PinWorkflowTest(unittest.TestCase):
         third, calls = self.run_pin()
         self.assertEqual(third.returncode, 0, third.stderr)
         self.assertEqual(sum(call[:3] == ["gh", "pr", "create"] for call in calls), 2)
+
+    def test_branch_and_title_name_the_app(self):
+        for tag, slug, app in (("v0.160.0-beta.1", "ftw-0x-beta", "ftw-0x-beta"), ("v0.160.0", "ftw", "ftw-0x")):
+            with self.subTest(tag=tag):
+                for name in ("branch", "pr-state", "calls"):
+                    (self.work / name).unlink(missing_ok=True)
+                result, calls = self.run_pin(tag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(["git", "push", "origin", f"bot/pin-{slug}-{tag}"], calls)
+                # The first stable pin adds config.yaml, which `commit -a` would miss.
+                self.assertIn(["git", "add", "-A", "--", app], calls)
+                self.assertIn(["git", "commit", "-m", f"chore: pin {slug} to FTW {tag}"], calls)
+                create = next(call for call in calls if call[:3] == ["gh", "pr", "create"])
+                self.assertEqual(create[create.index("--title") + 1], f"chore: pin {slug} to FTW {tag}")
 
     def test_closed_pin_is_not_reopened(self):
         (self.work / "branch").touch()

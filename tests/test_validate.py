@@ -251,6 +251,64 @@ class DriverBaselineTests(unittest.TestCase):
         with self.assertRaisesRegex(validate.ValidationError, "manifest SHA-256 is invalid"):
             validate.validate_common(self.compat)
 
+class NativeAppsTests(unittest.TestCase):
+    """The 0.x beta and stable apps: one store entry each, one recipe."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        from tests.test_native_pin import unlisted_copy
+        import shutil
+        shutil.copytree(validate.native_pin.APP, self.root / "ftw-0x-beta")
+        self.stable = unlisted_copy(self.root / "ftw-0x")
+
+    def catalog(self, *manifests: str) -> None:
+        for manifest in manifests:
+            path = self.root / manifest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n" if manifest != "ftw-0x-beta/config.yaml" else path.read_text())
+        with mock.patch.object(validate, "ROOT", self.root):
+            validate.validate_catalog()
+
+    def test_stable_app_may_be_listed_beside_the_beta(self) -> None:
+        self.catalog("ftw-0x/config.yaml")
+
+    def test_retired_ftw_folder_never_lists_an_app(self) -> None:
+        with self.assertRaisesRegex(validate.ValidationError, "only ftw-0x-beta"):
+            self.catalog("ftw/config.yaml")
+
+    def test_same_recipe_passes_with_different_pins(self) -> None:
+        validate.same_recipe(self.root / "ftw-0x-beta", self.stable)
+
+    def test_recipe_drift_is_refused(self) -> None:
+        for name, old, new in (
+            ("run.sh", "export FTW_HA_INGRESS=1", "export FTW_HA_INGRESS=0"),
+            ("Dockerfile", "EXPOSE 18099", "EXPOSE 8080"),
+            ("mqtt-service.sh", "http://supervisor/services/mqtt", "http://example.invalid/"),
+            ("unlisted.yaml", "ingress_port: 18099", "ingress_port: 18098"),
+            ("unlisted.yaml", "  - mqtt:want", "  - mqtt:need"),
+        ):
+            with self.subTest(name=name, new=new):
+                path = self.stable / name
+                original = path.read_text()
+                self.assertIn(old, original)
+                path.write_text(original.replace(old, new))
+                try:
+                    with self.assertRaisesRegex(validate.ValidationError, "differ"):
+                        validate.same_recipe(self.root / "ftw-0x-beta", self.stable)
+                finally:
+                    path.write_text(original)
+
+    def test_compatibility_names_the_native_apps(self) -> None:
+        compat = validate.load_yaml(validate.ROOT / "compatibility.yaml")
+        validate.validate_native(compat)
+        for field, value in (("add_on", "ftw-stable"), ("directory", "ftw"), ("channel", "beta")):
+            broken = copy.deepcopy(compat)
+            broken["native"]["stable"][field] = value
+            with self.subTest(field=field), self.assertRaises(validate.ValidationError):
+                validate.validate_native(broken)
+
 
 if __name__ == "__main__":
     unittest.main()

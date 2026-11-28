@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Check or move the ftw-0x-beta pin against FTW's ftw-native-release.json.
+"""Check or move the 0.x app pins against FTW's ftw-native-release.json.
 
-  native_pin.py check            verify config.yaml/Dockerfile agree and match
-                                 the release's own receipt and .sha256 files
-  native_pin.py bump [TAG]       rewrite the pin to TAG (default: newest new-line
-                                 0.x beta) after the same verification
+  native_pin.py check            verify each app's manifest and Dockerfile agree
+                                 and match the release's own receipt and
+                                 .sha256 files
+  native_pin.py bump [TAG]       rewrite a pin to TAG after the same checks.
+                                 A beta tag (v0.X.Y-beta.N, default: the newest)
+                                 moves ftw-0x-beta; a stable tag (v0.X.Y) moves
+                                 the stable app in ftw-0x
+
+The stable app stays out of the store until the first 0.x stable: its manifest
+is kept as ftw-0x/unlisted.yaml, which Supervisor does not read, and its pins
+are empty. The first stable bump writes ftw-0x/config.yaml, which lists it.
 
 It only edits files in this repository. The pin workflow merges its pull request after Check passes; Supervisor then builds the app on the device.
 """
@@ -21,9 +28,13 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APP = ROOT / "ftw-0x-beta"
+STABLE_APP = ROOT / "ftw-0x"
 REPO = "srcfl/ftw"
 TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)-beta\.(\d+)$")
+STABLE_TAG_RE = re.compile(r"^v0\.(\d+)\.(\d+)$")
 MIN_MINOR = 131  # the new 0.x line starts at v0.131.0-beta.1
+SLUGS = {"beta": "ftw-0x-beta", "stable": "ftw"}
+UNLISTED = "unlisted.yaml"  # the stable manifest before the first stable
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ATTEMPTS = 3
 UNRELEASED = "# Changelog\n\n## Unreleased\n\n"
@@ -59,14 +70,28 @@ def asset(tag: str, name: str) -> bytes:
 
 
 def valid_tag(tag: str) -> bool:
+    """A new-line 0.x beta tag."""
     m = TAG_RE.match(tag)
     return bool(m) and int(m.group(1)) >= MIN_MINOR
 
 
+def channel(tag: str) -> str:
+    """beta or stable, for a tag of the new 0.x line."""
+    for name, pattern in (("beta", TAG_RE), ("stable", STABLE_TAG_RE)):
+        m = pattern.match(tag)
+        if m and int(m.group(1)) >= MIN_MINOR:
+            return name
+    raise SystemExit(f"{tag} is not a new-line 0.x beta or stable tag")
+
+
 def tag_order(tag: str) -> tuple[int, ...]:
-    if not valid_tag(tag):
-        raise SystemExit(f"{tag} is not a new-line 0.x beta tag")
-    return tuple(int(x) for x in TAG_RE.fullmatch(tag).groups())
+    """Sort key within one channel: (minor, patch, beta) or (minor, patch)."""
+    pattern = TAG_RE if channel(tag) == "beta" else STABLE_TAG_RE
+    return tuple(int(x) for x in pattern.fullmatch(tag).groups())
+
+
+def app_dir(name: str) -> pathlib.Path:
+    return APP if name == "beta" else STABLE_APP
 
 
 def latest_tag() -> str:
@@ -78,11 +103,10 @@ def latest_tag() -> str:
 
 
 def receipt(tag: str) -> dict[str, str]:
-    if not valid_tag(tag):
-        raise SystemExit(f"{tag} is not a new-line 0.x beta tag")
+    name = channel(tag)
     data = json.loads(asset(tag, "ftw-native-release.json"))
-    if data.get("schema") != 1 or data.get("channel") != "beta" or data.get("tag") != tag:
-        raise SystemExit(f"{tag}: ftw-native-release.json does not describe this beta")
+    if data.get("schema") != 1 or data.get("channel") != name or data.get("tag") != tag:
+        raise SystemExit(f"{tag}: ftw-native-release.json does not describe this {name} release")
     sums = data.get("sha256") or {}
     for arch in ("amd64", "arm64"):
         want = sums.get(arch, "")
@@ -94,59 +118,107 @@ def receipt(tag: str) -> dict[str, str]:
     return {"amd64": sums["amd64"], "arm64": sums["arm64"]}
 
 
-def read_pin() -> tuple[str, str, dict[str, str]]:
-    config = (APP / "config.yaml").read_text()
-    build = (APP / "Dockerfile").read_text()
-    if (APP / "build.yaml").exists():
+def manifest(directory: pathlib.Path) -> pathlib.Path:
+    """config.yaml once the app is listed, else the unlisted manifest."""
+    listed = directory / "config.yaml"
+    return listed if listed.exists() else directory / UNLISTED
+
+
+def field(text: str, key: str) -> str:
+    m = re.search(rf'^ARG {key}=([^\n]*)$', text, re.M)
+    if m is None:
+        m = re.search(rf'^\s*{key}:\s*"?([^"\n]*)"?\s*$', text, re.M)
+    if not m:
+        raise SystemExit(f"missing {key}")
+    return m.group(1).strip()
+
+
+def read_pin(name: str = "beta") -> tuple[str | None, str | None, dict[str, str] | None]:
+    """The pinned tag, app version and package sums; all None while unlisted."""
+    directory = app_dir(name)
+    path = manifest(directory)
+    if (directory / "build.yaml").exists():
         raise SystemExit("keep the native pins in Dockerfile, not deprecated build.yaml")
-
-    def field(text: str, key: str) -> str:
-        m = re.search(rf'^ARG {key}=([^\n]+)$', text, re.M)
-        if m is None:
-            m = re.search(rf'^\s*{key}:\s*"?([^"\n]+)"?\s*$', text, re.M)
-        if not m:
-            raise SystemExit(f"missing {key}")
-        return m.group(1).strip()
-
+    if path.name == UNLISTED and (name == "beta" or not path.exists()):
+        raise SystemExit(f"{directory.name} has no config.yaml")
+    if (directory / "config.yaml").exists() and (directory / UNLISTED).exists():
+        raise SystemExit(f"{directory.name} must keep one manifest, not config.yaml and {UNLISTED}")
+    config = path.read_text()
+    build = (directory / "Dockerfile").read_text()
+    if field(config, "slug") != SLUGS[name] or re.search(r"^image:", config, re.M):
+        raise SystemExit(f"{directory.name} must keep slug {SLUGS[name]} and have no image: key (built on the device)")
     tag = field(build, "FTW_VERSION")
-    tag_order(tag)
     version = field(config, "version")
+    sums = {"amd64": field(build, "FTW_SHA256_AMD64"), "arm64": field(build, "FTW_SHA256_ARM64")}
+    if path.name == UNLISTED:
+        # Not in the store yet: no release is pinned, so nothing may look pinned.
+        if tag or version or any(sums.values()) or field(config, "FTW_BUNDLE_VERSION") or field(config, "FTW_IMAGE_TAG"):
+            raise SystemExit(f"{directory.name}/{UNLISTED} must pin nothing until the first stable")
+        return None, None, None
+    if channel(tag) != name:
+        raise SystemExit(f"{directory.name} takes only {name} releases, not {tag}")
     if version != tag[1:] or field(config, "FTW_BUNDLE_VERSION") != version or field(config, "FTW_IMAGE_TAG") != tag:
         raise SystemExit("config.yaml and Dockerfile pin different versions")
-    if field(config, "slug") != "ftw-0x-beta" or re.search(r"^image:", config, re.M):
-        raise SystemExit("ftw-0x-beta must keep its slug and have no image: key (built on the device)")
-    return tag, version, {"amd64": field(build, "FTW_SHA256_AMD64"), "arm64": field(build, "FTW_SHA256_ARM64")}
+    for arch, value in sums.items():
+        if not HEX64.match(value):
+            raise SystemExit(f"{directory.name} pins no sha256 for {arch}")
+    return tag, version, sums
+
+
+def put(text: str, key: str, pattern: str, value: str) -> str:
+    """Set one pinned value; the line must be there exactly once."""
+    out, count = re.subn(pattern, lambda m: m.group(1) + value, text, flags=re.M)
+    if count != 1:
+        raise SystemExit(f"expected one {key} line, found {count}")
+    return out
 
 
 def write_pin(tag: str, sums: dict[str, str]) -> None:
-    old_tag, old_version, old_sums = read_pin()
+    name = channel(tag)
+    read_pin(name)
+    directory = app_dir(name)
+    source = manifest(directory)
     version = tag[1:]
-    config = (APP / "config.yaml").read_text()
-    config = config.replace(f'"{old_version}"', f'"{version}"').replace(old_tag, tag)
-    build = (APP / "Dockerfile").read_text().replace(old_tag, tag)
-    for arch in ("amd64", "arm64"):
-        build = build.replace(old_sums[arch], sums[arch])
-    (APP / "config.yaml").write_text(config)
-    (APP / "Dockerfile").write_text(build)
+    config = source.read_text()
+    if source.name == UNLISTED:
+        config = re.sub(r"\A(?:#[^\n]*\n)+", "", config)  # the note about staying unlisted
+    config = put(config, "version", r'^(version:[ \t]*)"[^"\n]*"[ \t]*$', f'"{version}"')
+    config = put(config, "FTW_BUNDLE_VERSION", r'^([ \t]+FTW_BUNDLE_VERSION:[ \t]*)"[^"\n]*"[ \t]*$', f'"{version}"')
+    config = put(config, "FTW_IMAGE_TAG", r'^([ \t]+FTW_IMAGE_TAG:[ \t]*)(?:""|\S*)[ \t]*$', tag)
+    build = (directory / "Dockerfile").read_text()
+    build = put(build, "FTW_VERSION", r"^(ARG FTW_VERSION=)\S*$", tag)
+    build = put(build, "FTW_SHA256_AMD64", r"^(ARG FTW_SHA256_AMD64=)\S*$", sums["amd64"])
+    build = put(build, "FTW_SHA256_ARM64", r"^(ARG FTW_SHA256_ARM64=)\S*$", sums["arm64"])
+    (directory / "config.yaml").write_text(config)
+    (directory / "Dockerfile").write_text(build)
+    if source.name == UNLISTED:
+        source.unlink()  # config.yaml now lists the app in the store
 
 
 def main(argv: list[str]) -> int:
     cmd = argv[1] if len(argv) > 1 else "check"
     if cmd == "check":
-        tag, _, sums = read_pin()
-        if receipt(tag) != sums:
-            raise SystemExit(f"pinned sha256 values differ from {tag}'s receipt")
-        print(f"ok: ftw-0x-beta pins {tag}")
+        for name in ("beta", "stable"):
+            if name == "stable" and not app_dir(name).is_dir():
+                continue
+            tag, _, sums = read_pin(name)
+            if tag is None:
+                print(f"ok: {SLUGS[name]} is not listed until the first 0.x stable")
+                continue
+            if receipt(tag) != sums:
+                raise SystemExit(f"pinned sha256 values differ from {tag}'s receipt")
+            print(f"ok: {SLUGS[name]} pins {tag}")
     elif cmd == "bump":
         tag = argv[2] if len(argv) > 2 else latest_tag()
-        current, _, _ = read_pin()
-        if tag_order(tag) < tag_order(current):
-            print(f"ignored older beta {tag}; already pinned to {current}")
+        name = channel(tag)
+        current, _, _ = read_pin(name)
+        if current is not None and tag_order(tag) < tag_order(current):
+            print(f"ignored older {name} {tag}; already pinned to {current}")
             return 0
         sums = receipt(tag)
         write_pin(tag, sums)
         if tag != current:
-            changelog = APP / "CHANGELOG.md"
+            changelog = app_dir(name) / "CHANGELOG.md"
             notes = changelog.read_text()
             entry = (f"# Changelog\n\n## {tag[1:]}\n\n"
                      f"- Update FTW to [{tag}](https://github.com/{REPO}/releases/tag/{tag}).\n")
@@ -156,7 +228,7 @@ def main(argv: list[str]) -> int:
             else:
                 notes = notes.replace("# Changelog\n\n", entry + "\n", 1)
             changelog.write_text(notes)
-        read_pin()
+        read_pin(name)
         print(f"pinned {tag}")
     else:
         raise SystemExit(__doc__)

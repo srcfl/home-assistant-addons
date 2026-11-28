@@ -1,7 +1,12 @@
 # FTW — old release line
 
+This folder is the retired 3.x build context; CI still builds it against a
+fixture. It never carries a manifest. The slug `ftw` now belongs to the new
+stable app in [`ftw-0x/`](../ftw-0x/DOCS.md).
+
 2.x and 3.x receive no further updates. This app does not follow new 0.x.
-This stable app was never published. New installs use
+No stable version of this app was ever published; its only listed version,
+`0.1.0-beta.1`, left the store on 18 September 2026. New installs use
 [FTW (beta)](../ftw-0x-beta/DOCS.md) (`ftw-0x-beta`, version 0.x).
 
 Use [Install and update FTW](https://github.com/srcfl/ftw/blob/master/docs/native-beta.md)

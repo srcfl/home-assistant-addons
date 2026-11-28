@@ -1,9 +1,12 @@
 # Compatibility
 
-## Native 0.x beta
+## Native 0.x beta and stable
 
-`ftw-0x-beta/config.yaml` and `ftw-0x-beta/Dockerfile` pin the app and Core
-version and the package SHA-256 for amd64 and arm64. `native_pin.py check`
+`ftw-0x-beta/config.yaml` and `ftw-0x-beta/Dockerfile` pin the beta app and Core
+version and the package SHA-256 for amd64 and arm64. The stable app `ftw` in
+`ftw-0x/` pins the same way, to stable releases only, and is not listed until
+the first 0.x stable (see [RELEASING.md](RELEASING.md)). `compatibility.yaml`
+names both under `native`. `native_pin.py check`
 compares them with the published native receipt and checksum files.
 The package includes Core, web assets, bundled recovery drivers and Energyplan.
 Managed drivers still use Core's signed driver channel.

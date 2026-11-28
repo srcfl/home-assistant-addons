@@ -20,9 +20,20 @@ def pull():
             "head": {"ref": f"bot/pin-ftw-0x-beta-{TAG}", "repo": {"full_name": publish.REPOSITORY}}}
 
 
+def git(*args):
+    return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
+
+
 class PublishTest(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(publish.identity(pull()), TAG)
+        pr = pull()
+        pr["head"]["ref"] = "bot/pin-ftw-v0.160.0"
+        self.assertEqual(publish.identity(pr), "v0.160.0")
+        for branch in ("bot/pin-ftw-0x-beta-v0.160.0", "bot/pin-ftw-v0.160.0-beta.1", "bot/pin-ftw-v0.130.4"):
+            pr["head"]["ref"] = branch
+            with self.subTest(branch=branch), self.assertRaises(ValueError):
+                publish.identity(pr)
         for field, value in (("draft", True), ("state", "closed"),
                              ("user", {"login": "someone"})):
             pr = pull()
@@ -119,6 +130,67 @@ class PublishTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publish.publish("123")
             api.assert_not_called()
+
+
+class StablePublishTest(unittest.TestCase):
+    """The first stable pin lists the app: it adds config.yaml and removes unlisted.yaml."""
+
+    def setUp(self):
+        from tests.test_native_pin import unlisted_copy
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.work = Path(tmp.name)
+        unlisted_copy(self.work / "ftw-0x")
+        shutil.copytree(native_pin.APP, self.work / "ftw-0x-beta")
+        previous = Path.cwd()
+        os.chdir(self.work)
+        self.addCleanup(os.chdir, previous)
+        git("init")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@example.com")
+        git("add", ".")
+        git("commit", "-m", "base")
+        self.base = git("rev-parse", "HEAD")
+        minor = native_pin.tag_order(native_pin.read_pin()[0])[0]
+        self.tag = f"v0.{minor}.0"
+        for name, path in (("APP", self.work / "ftw-0x-beta"), ("STABLE_APP", self.work / "ftw-0x"),
+                           ("receipt", lambda tag: SUMS)):
+            patcher = patch.object(native_pin, name, path) if name != "receipt" else patch.object(native_pin, name, side_effect=path)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def pin(self):
+        native_pin.main(["native_pin.py", "bump", self.tag])
+        git("add", "-A", "ftw-0x")
+        git("commit", "-m", "pin")
+        return git("rev-parse", "HEAD")
+
+    def test_first_listing_diff_only(self):
+        head = self.pin()
+        self.assertEqual(set(git("diff", "--no-renames", "--name-only", self.base, head).splitlines()),
+                         {"ftw-0x/config.yaml", "ftw-0x/Dockerfile", "ftw-0x/CHANGELOG.md", "ftw-0x/unlisted.yaml"})
+        publish.verify_change(self.base, head, self.tag)
+        self.assertEqual(publish.pinned_at(head, "stable"), self.tag)
+        self.assertIsNone(publish.pinned_at(self.base, "stable"))
+        with self.assertRaises(ValueError):
+            publish.verify_change(self.base, head, f"{self.tag[:-1]}1")
+
+    def test_listing_with_other_changes_is_refused(self):
+        head = self.pin()
+        for change in ("tamper", "keep unlisted", "touch beta"):
+            git("reset", "-q", "--hard", head)
+            if change == "tamper":
+                path = self.work / "ftw-0x/config.yaml"
+                path.write_text(path.read_text().replace("ingress_port: 18099", "ingress_port: 18098"))
+            elif change == "keep unlisted":
+                git("checkout", self.base, "--", "ftw-0x/unlisted.yaml")
+            else:
+                path = self.work / "ftw-0x-beta/run.sh"
+                path.write_text(path.read_text() + "# unexpected change\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", change)
+            with self.subTest(change=change), self.assertRaises((ValueError, SystemExit)):
+                publish.verify_change(self.base, git("rev-parse", "HEAD"), self.tag)
 
 
 if __name__ == "__main__":

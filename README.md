@@ -22,7 +22,8 @@ Open **Settings → Apps → Install app → ⋮ → Repositories**, add
 start it and choose **Open web UI**. Turn on **Show in sidebar** on the app's
 **Info** tab to open FTW from Home Assistant's sidebar.
 
-The app store offers only **FTW (beta)**, version 0.x. The retired 3.x apps,
+A stable app, **FTW**, follows with FTW's first 0.x stable release; until then
+the app store offers only **FTW (beta)**, version 0.x. The retired 3.x apps,
 one of them also named FTW (beta), are no longer listed for new installs. Existing installations and their data stay
 on the device; keep a backup before moving to the new app.
 

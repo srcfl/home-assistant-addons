@@ -5,6 +5,22 @@ core:
   image: ghcr.io/srcfl/ftw
   mode: home_assistant_add_on
   self_update: false
+# The 0.x apps. Their pins live in each app's manifest and Dockerfile, and only
+# sync-native.yml moves them, each to a release of its own channel. The stable
+# app keeps its manifest as unlisted.yaml, out of the store, until it pins the
+# first 0.x stable; that pin writes its config.yaml.
+native:
+  beta:
+    add_on: ftw-0x-beta
+    directory: ftw-0x-beta
+    channel: beta
+  stable:
+    add_on: ftw
+    directory: ftw-0x
+    channel: stable
+    listed_from: v0.131.0
+# The blocks below are the retired 3.x record. Its stable app was never
+# published; the slug ftw now belongs to native.stable above.
 beta:
   add_on: ftw-beta
   version: 3.8.0-beta.1

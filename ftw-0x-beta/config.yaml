@@ -1,5 +1,6 @@
 name: FTW (beta)
-version: "0.170.1-beta.1"
+version: "0.171.0-beta.1"
+image: "ghcr.io/srcfl/home-assistant-addons/{arch}-ftw-0x"
 slug: ftw-0x-beta
 description: Plans and runs your battery, car charging and solar around electricity prices. Beta.
 url: https://github.com/srcfl/home-assistant-addons/tree/main/ftw-0x-beta
@@ -21,8 +22,8 @@ environment:
   FTW_HA_INGRESS: "1"
   FTW_SELFUPDATE_ENABLED: "0"
   FTW_BUNDLE: home_assistant_addon
-  FTW_BUNDLE_VERSION: "0.170.1-beta.1"
-  FTW_IMAGE_TAG: v0.170.1-beta.1
+  FTW_BUNDLE_VERSION: "0.171.0-beta.1"
+  FTW_IMAGE_TAG: v0.171.0-beta.1
 # Supervisor pulls `image:` ({arch} filled in) tagged with `version:`. The pin
 # workflow builds, tests, signs and pushes that image from this folder's
 # Dockerfile before the pin merges (RELEASING.md), so a merged pin is still the

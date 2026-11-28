@@ -47,6 +47,10 @@ export FTW_BUNDLE=home_assistant_addon
 # Home Assistant's login.
 export FTW_HA_INGRESS=1
 
+# shellcheck source=/dev/null
+source /usr/local/bin/mqtt-service.sh
+export_home_assistant_mqtt
+
 exec setpriv --reuid="${runtime_uid}" --regid="${runtime_gid}" --clear-groups -- \
   /app/ftw \
   -config /data/config.yaml \

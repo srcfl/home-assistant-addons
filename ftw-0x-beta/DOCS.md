@@ -50,6 +50,16 @@ work in this app, since it needs FTW's own web port, which this app closes.
 If you used the webapp with an older FTW, remove it from the home screen and
 pair again.
 
+## 5. FTW in Home Assistant
+
+FTW's values show up as Home Assistant entities over MQTT, with nothing to
+type. Add the **Mosquitto broker** app and the **MQTT** integration Home
+Assistant then offers, and start FTW after the broker. The app log shows
+`Home Assistant's MQTT broker is core-mosquitto:1883`. In FTW,
+**Settings → Integrations → Enabled** turns this off, and a broker you set
+there wins. FTW Core reads the broker from the app from srcfl/ftw#CORE_PR on;
+older FTW needs the broker typed under **Settings → Integrations**.
+
 ## Updates and backup
 
 - Updates appear under **Settings → Updates**. Take a backup first if you want

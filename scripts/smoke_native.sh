@@ -5,7 +5,8 @@
 #   Supervisor-addressed ingress, /data volume with options.json, Docker init, uid 100:101,
 #   setup wizard healthy, valid config -> /api/health, restart persistence,
 #   cold backup (stop, tar /data, restore into a fresh volume), Core death
-#   ends the container.
+#   ends the container. Supervisor here offers no MQTT broker, so the
+#   broker lookup must fail and Core must start anyway.
 set -Eeuo pipefail
 image=${1:?usage: smoke_native.sh IMAGE}
 port=18099
@@ -55,7 +56,9 @@ log "restore repair refuses links and nested mounts"
 run() {
   local -a docker_args
   read -r -a docker_args <<< "${FTW_SMOKE_DOCKER_ARGS:-}"
-  docker run -d --init "${docker_args[@]}" --network "${network}" --ip 172.30.33.10 --name "${name}" -v "$1:/data" "${image}" >/dev/null
+  docker run -d --init "${docker_args[@]}" --network "${network}" --ip 172.30.33.10 \
+    --add-host supervisor:172.30.32.2 -e SUPERVISOR_TOKEN=smoke-token \
+    --name "${name}" -v "$1:/data" "${image}" >/dev/null
 }
 healthy() {
   for _ in $(seq 1 90); do
@@ -83,9 +86,13 @@ docker run --rm -v "${vol}:/data" --entrypoint sh "${image}" -c 'echo "{}" >/dat
 run "${vol}"; healthy
 log "fresh install healthy (setup wizard); /setup -> $(http /setup)"
 docker exec "${name}" bash -ceu 'test "$FTW_SELFUPDATE_ENABLED" = 0; test "$FTW_BUNDLE" = home_assistant_addon; test "$FTW_HA_INGRESS" = 1'
+docker logs "${name}" 2>&1 | grep -q 'Home Assistant has no MQTT broker' || fail "MQTT broker lookup did not report"
 owner="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && stat -c %u:%g $p; done' | awk 'NR==1')"
 [[ "${owner}" == 100:101 ]] || fail "Core runs as ${owner}, want 100:101"
 log "Core runs as ${owner}"
+core_env="$(docker exec "${name}" sh -c 'for p in /proc/[0-9]*; do [ "$p" = "/proc/$$" ] && continue; tr "\\0" " " <$p/cmdline 2>/dev/null | grep -q -- "/app/ftw -config" && tr "\\0" "\\n" <$p/environ; done; true')"
+[[ "${core_env}" != *FTW_HA_MQTT_HOST=* ]] || fail "Core got an MQTT broker that Supervisor never offered"
+log "no broker offered: Core started without one"
 [[ "$(http /)" == 302 ]] || fail "setup redirect"
 request / -D - -o /dev/null | tr -d '\r' | grep -Fqi 'location: /api/hassio_ingress/smoke/setup' || fail "redirect escaped HA"
 log "web UI through Supervisor -> 200"

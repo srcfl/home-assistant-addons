@@ -13,6 +13,9 @@ ingress_port: 18099
 panel_icon: mdi:solar-power-variant
 panel_title: FTW
 homeassistant: "2026.10.2"
+# Supervisor tells the app about Home Assistant's MQTT broker (mqtt-service.sh).
+services:
+  - mqtt:want
 backup: cold
 timeout: 60
 environment:

@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.170.0-beta.1
 
+- Update FTW to [v0.170.0-beta.1](https://github.com/srcfl/ftw/releases/tag/v0.170.0-beta.1).
 - FTW opens inside Home Assistant, behind Home Assistant's login. No separate FTW password is needed, also after an update from a version with one.
 - FTW's own web port 8080 on the home network is closed. Pair the FTW app with the link or QR; it connects through FTW Cloud.
 - The app is now named **FTW (beta)**.
